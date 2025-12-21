@@ -1,0 +1,15 @@
+{
+    "faction_name": "Ember Academy",
+
+    "prestige": 70,
+    "capacity": 100,
+    "min_enrollment_age": 13,
+    "max_enrollment_age": 14,
+    "enrollment_length": 4,
+
+    "term_start_doy": 244,
+    "term_end_doy": 152,
+    "application_deadline_doy": 182,
+    
+    "entry_requirements": null
+}

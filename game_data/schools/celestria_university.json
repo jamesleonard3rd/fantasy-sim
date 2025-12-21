@@ -1,0 +1,15 @@
+{
+    "faction_name": "Celestria University",
+
+    "prestige": 90,
+    "capacity": 400,
+    "min_enrollment_age": 17,
+    "max_enrollment_age": 18,
+    "enrollment_length": 4,
+
+    "term_start_doy": 244,
+    "term_end_doy": 152,
+    "application_deadline_doy": 182,
+    
+    "entry_requirements": null
+}
