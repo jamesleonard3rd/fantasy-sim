@@ -15,8 +15,8 @@
             "weight": 20,
             "no_subtype_weight": 30,
             "subtypes": [
-                {"name": "Metal", "weight": 10, "replaces_parent": true},
-                {"name": "Sand", "weight": 10, "replaces_parent": true}
+                {"name": "Metal", "weight": 7, "replaces_parent": true},
+                {"name": "Sand", "weight": 7, "replaces_parent": true}
             ]
         },
         {
@@ -28,12 +28,6 @@
         {
             "name": "Water",
             "weight": 10,
-            "no_subtype_weight": 100,
-            "subtypes": []
-        },
-        {
-            "name": "Arcane",
-            "weight": 15,
             "no_subtype_weight": 100,
             "subtypes": []
         },
@@ -52,7 +46,7 @@
     ],
     "race_modifiers": {
         "Human": {"no_magic": 0.1},
-        "Greenskin": {"no_magic": 10, "Shadow": 2.0},
-        "Elf": {"no_magic": 0.2, "Arcane": 1.5}
+        "High Elf": {"no_magic": 0},
+        "Greenskin": {"no_magic": 10}
     }
 }

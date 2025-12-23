@@ -25,6 +25,20 @@ CREATE TABLE IF NOT EXISTS traits (
     description TEXT
 );
 
+CREATE TABLE IF NOT EXISTS stats (
+    id SERIAL PRIMARY KEY,
+    name TEXT UNIQUE NOT NULL,
+    description TEXT
+);
+
+CREATE TABLE IF NOT EXISTS trait_stat_modifiers (
+    trait_id INT NOT NULL REFERENCES traits(id) ON DELETE CASCADE,
+    stat_id INT NOT NULL REFERENCES stats(id) ON DELETE CASCADE,
+    modifier_type TEXT NOT NULL CHECK (modifier_type IN ('add', 'mult')),
+    value NUMERIC NOT NULL,
+    PRIMARY KEY (trait_id, stat_id, modifier_type)
+);
+
 CREATE TABLE IF NOT EXISTS entity_traits (
     entity_id INT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
     trait_id INT NOT NULL REFERENCES traits(id) ON DELETE CASCADE,
@@ -80,10 +94,16 @@ CREATE TABLE IF NOT EXISTS abilities (
     id SERIAL PRIMARY KEY,
     name TEXT UNIQUE NOT NULL,
     description TEXT,
-    ability_type TEXT NOT NULL CHECK (ability_type IN ('active', 'passive')),
+    type TEXT NOT NULL CHECK (type IN ('active', 'passive')),
     cooldown_seconds INT DEFAULT 0 CHECK (cooldown_seconds >= 0),
     cost INT DEFAULT 0 CHECK (cost >= 0),
     damage INT DEFAULT 0 CHECK (damage >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS trait_abilities (
+    trait_id INT NOT NULL REFERENCES traits(id) ON DELETE CASCADE,
+    ability_id INT NOT NULL REFERENCES abilities(id) ON DELETE CASCADE,
+    PRIMARY KEY (trait_id, ability_id)
 );
 
 CREATE TABLE IF NOT EXISTS entity_abilities (

@@ -1,0 +1,16 @@
+{
+  "traits": {
+    "starting_trait_counts": {
+      "0": 40,
+      "1": 40,
+      "2": 10,
+      "3": 1
+    }
+  },
+  "simulation": {
+    "tick_rate": 10
+  },
+  "balance": {
+    "global_xp_multiplier": 1.0
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "traits": [
+    {
+      "name": "Strong",
+      "description": "{name} hits harder than normal.",
+      "modifiers": [
+        { "stat": "Strength", "type": "add", "value": 3 }
+      ],
+      "abilities": []
+    },
+    {
+      "name": "Tough",
+      "description": "{name} doesn't go down easily.",
+      "modifiers": [
+        { "stat": "Fortitude", "type": "add", "value": 3 }
+      ],
+      "abilities": []
+    },
+    {
+      "name": "Quick",
+      "description": "{name} moves with quick, sure steps.",
+      "modifiers": [
+        { "stat": "Dexterity", "type": "add", "value": 3 }
+      ],
+      "abilities": []
+    },
+    {
+      "name": "Clever",
+      "description": "{name} picks up ideas quickly.",
+      "modifiers": [
+        { "stat": "Intelligence", "type": "add", "value": 3 }
+      ],
+      "abilities": []
+    },
+    {
+      "name": "Charming",
+      "description": "{name} has a way with people.",
+      "modifiers": [
+        { "stat": "Charisma", "type": "add", "value": 3 }
+      ],
+      "abilities": []
+    }
+  ]
+}
+

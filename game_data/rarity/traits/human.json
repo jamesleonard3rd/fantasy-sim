@@ -1,0 +1,11 @@
+{
+  "weights": {
+    "Ferocious": 6,
+    "Bookish": 5,
+    "Brave": 3
+  },
+  "blocked": [
+    "Ancient Blood"
+  ]
+}
+

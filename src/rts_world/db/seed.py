@@ -1,7 +1,8 @@
 
 from pathlib import Path
-from db import get_connection
+from .db import get_connection
 import json
+import psycopg
 
 
 # Get the directory where this script lives
@@ -14,7 +15,7 @@ SCHEMA_FILE = DB_DIR / "schema.sql"
 SEED_FILE = DB_DIR / "seed_data.sql"
 
 
-def run_sql_file(conn, filepath: Path) -> None:
+def run_sql_file(conn: psycopg.Connection, filepath: Path) -> None:
     print(f"Running {filepath.name}...")
     sql = filepath.read_text()
     with conn.cursor() as cur:
@@ -22,11 +23,22 @@ def run_sql_file(conn, filepath: Path) -> None:
     conn.commit()
     print(f"  ✓ {filepath.name} completed")
 
-def add_schools(conn) -> None:
+def add_schools(conn: psycopg.Connection) -> None:
     print("Adding schools...")
     
     for filepath in SCHOOLS.glob("*.json"):
-        data = json.loads(filepath.read_text())
+        try:
+            content = filepath.read_text()
+            data = json.loads(content)
+        except FileNotFoundError:
+            print(f"  ⚠ School file not found: {filepath.name}, skipping...")
+            continue
+        except json.JSONDecodeError as e:
+            print(f"  ⚠ Invalid JSON in {filepath.name}: {e}, skipping...")
+            continue
+        except Exception as e:
+            print(f"  ⚠ Error reading {filepath.name}: {e}, skipping...")
+            continue
         
         with conn.cursor() as cur:
             cur.execute(
