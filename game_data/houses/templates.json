@@ -1,0 +1,89 @@
+{
+  "houses": [
+    {
+      "name": "House Valemont",
+      "type": "noble", 
+      "default_surname": "Valemont",
+      "spawn_min": 8,
+      "forced_traits": ["Valemont Blood"],
+      "house_trait_counts": {"0": 150, "1": 50},
+      "house_trait_weights": {
+        "Natural Leader": 1
+      },
+      "normal_trait_weight_mults": {
+        "Strong": 2,
+        "Charming": 2
+      },
+      "magic_type_counts": {"0": 100, "1": 50, "2": 5},
+      "magic_weights": {
+        "__non_house_magic": 1
+      },
+      "forced_magic": [],
+      "notes": "Valiant and noble house known for producing generals, marshals, and military leaders. "
+    },
+    {
+      "name": "House Belovar",
+      "type": "noble", 
+      "default_surname": "Belovar",
+      "spawn_min": 8,
+      "forced_traits": ["Arcane Lineage"],
+      "house_trait_counts": {"0": 150, "1": 50},
+      "house_trait_weights": {
+        "Natural Leader": 50,
+        "Beacon of Glory": 1
+      },
+      "normal_trait_weight_mults": {
+        "Strong": 2,
+        "Charming": 2
+      },
+      "magic_type_counts": {"0": 100, "1": 50, "2": 5},
+      "magic_weights": {
+        "__non_house_magic": 1
+      },
+      "forced_magic": [],
+      "notes": "The blood of archmage Belovar the Great runs through every branch of the house, binding them to an ancient arcane heritage."
+    },
+    {
+      "name": "House Rhaen",
+      "type": "Rhaen", 
+      "default_surname": "Rhaen",
+      "spawn_min": 8,
+      "forced_traits": ["Flame Within"],
+      "house_trait_counts": {"0": 100},
+      "house_trait_weights": {
+
+      },
+      "normal_trait_weight_mults": {
+        "Strong": 2,
+        "Charming": 2
+      },
+      "magic_type_counts": {"0": 100, "1": 50, "2": 5},
+      "magic_weights": {
+        "__non_house_magic": 1
+      },
+      "forced_magic": [],
+      "notes": "House Rhaen traces its power to ancient infernos or dragonkind, granting resistance to flame and mastery over burning warcraft. Their lands are scarred, but their armies are relentless."
+    },
+    {
+      "name": "House Eidra",
+      "type": "noble", 
+      "default_surname": "Eidra",
+      "spawn_min": 8,
+      "forced_traits": ["Blood of the First King"],
+      "house_trait_counts": {"0": 100, "1": 5},
+      "house_trait_weights": {
+        "Echo of Radiance": 1
+      },
+      "normal_trait_weight_mults": {
+        "Strong": 2,
+        "Charming": 2
+      },
+      "magic_type_counts": {"0": 100, "1": 50, "2": 5},
+      "magic_weights": {
+        "__non_house_magic": 1
+      },
+      "forced_magic": [],
+      "notes": "House Eidra traces its lineage to Eidros the First, the first human king to unite the early realms, remembered for wielding radiant light magic that turned the tide of humanity’s earliest wars. At the height of his reign, Eidros vanished without battle, body, or record, leaving behind only relics and unanswered questions that still divide scholars and priests alike. The light of Eidros rarely surfaces in his descendants. Across generations, only a handful of Eidrans have displayed fleeting manifestations of his radiance—brief, overwhelming surges of light magic that appear without warning and never fully return. “The Light Was Real. The End Was Not Seen.”"
+    }
+  ]
+}

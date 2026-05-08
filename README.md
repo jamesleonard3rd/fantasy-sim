@@ -86,20 +86,19 @@ pip install psycopg python-dotenv
 
 ---
 
-## Usage
+## Usage (backend now lives in `backend/`)
 
-- Initialize database (schema + seeds): `python -m scripts.init_db` or `make db-init`
-- Schema only: `python -m scripts.init_db --skip-seed`
-- Connectivity check: `python main.py ping`
-- Basic pipeline hook: `make check` (runs connectivity check)
+- Initialize database (schema + seeds): `python backend/scripts/init_db.py`
+- Schema only: `python backend/scripts/init_db.py --skip-seed`
+- Connectivity check/sample run: `python backend/main.py`
 - Integration smoke test (requires running Postgres): `python -m unittest tests/test_db_smoke.py`
 
 ---
 
 ## Next Steps
 
-1. Expand `src/rts_world/db/schema.sql` with planned components (traits/entity_traits, relationships with opinion score, abilities, schools, items) and fix the `positions` semicolon; align `src/rts_world/db/seed_data.sql` to match.
+1. Expand `backend/src/rts_world/db/schema.sql` with planned components (traits/entity_traits, relationships with opinion score, abilities, schools, items) and fix the `positions` semicolon; align `backend/src/rts_world/db/seed_data.sql` to match.
 2. Add constraints and indexes: `UNIQUE` on lookup names, cascades on join tables, check constraints (opinion range, rank enums), and spatial indexes for common position queries.
-3. Create a helper (e.g., `scripts/init_db.py`) to load schema + seed data using `psycopg` and `.env` connection settings; wire `main.py` to use it.
+3. Create a helper (e.g., `backend/scripts/init_db.py`) to load schema + seed data using `psycopg` and `.env` connection settings; wire `backend/main.py` to use it.
 4. Add a minimal migration/check pipeline (e.g., `make` or `tox`) to run schema load, seeds, and integrity checks automatically.
 5. Write a small integration test that inserts a sample entity with traits/factions/position and verifies the relationships round-trip.

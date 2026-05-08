@@ -20,7 +20,7 @@
       "name": "Quick",
       "description": "{name} moves with quick, sure steps.",
       "modifiers": [
-        { "stat": "Dexterity", "type": "add", "value": 3 }
+        { "stat": "Agility", "type": "add", "value": 3 }
       ],
       "abilities": []
     },
@@ -38,6 +38,82 @@
       "modifiers": [
         { "stat": "Charisma", "type": "add", "value": 3 }
       ],
+      "abilities": [],
+      "max_xp": 100
+    },
+    {
+      "name": "Blood of the First King (Stirring)",
+      "tier": 1,
+      "description": "The ancient blood is present, quiet but undeniable. {name} carries an uncommon depth of endurance and resolve, as though shaped for burdens others were never meant to bear.",
+      "modifiers": [
+        {}
+      ],
+      "abilities": [],
+      "required_xp": 100,
+      "evolves_to": "Blood of the First King (Awakened)"
+    },
+    {
+      "name": "Blood of the First King (Awakened)",
+      "tier": 2,
+      "description": "The legacy begins to assert itself, lending weight to every action and steadiness to even the most demanding trials. Those who watch closely sense that {name} draws from a reserve far older than themselves.",
+      "modifiers": [
+        {}
+      ],
+      "abilities": [],
+      "required_xp": 500,
+      "requires": ["Echo of Radiance"],
+      "evolves_to": "Blood of the First King (Ascendant)"
+    },
+    {
+      "name": "Blood of the First King (Ascendant)",
+      "tier": 3,
+      "description": "The First King’s legacy stands fully realized, and the bearer moves with the certainty of one shaped by history rather than chance. Few can match their capacity to endure, command, and prevail once this inheritance has claimed its due.",
+      "modifiers": [
+        {}
+      ],
+      "abilities": []
+    },
+    {
+      "name": "Echo of Radiance",
+      "description": "The light seems to favor {name}.",
+      "modifiers": [
+        {}
+      ],
+      "abilities": []
+    },
+    {
+      "name": "Valemont Blood",
+      "tier": 1,
+      "description": "",
+      "modifiers": [],
+      "abilities": []
+    },
+    {
+      "name": "Natural Leader",
+      "tier": 1,
+      "description": "",
+      "modifiers": [],
+      "abilities": []
+    },
+    {
+      "name": "Beacon of Glory",
+      "tier": 1,
+      "description": "",
+      "modifiers": [],
+      "abilities": []
+    },
+    {
+      "name": "Arcane Lineage",
+      "tier": 1,
+      "description": "",
+      "modifiers": [],
+      "abilities": []
+    },
+    {
+      "name": "Flame Within",
+      "tier": 1,
+      "description": "",
+      "modifiers": [],
       "abilities": []
     }
   ]

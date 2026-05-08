@@ -1,10 +1,6 @@
 {
     "weights": {
         "Human": 40,
-        "High Elf": 8,
-        "Wood Elf": 4,
-        "Dark Elf": 6,
-        "Goblin": 22,
-        "Orc": 8
+        "High Elf": 8
     }
 }

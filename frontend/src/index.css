@@ -1,0 +1,12 @@
+:root {
+  font-family: Arial, sans-serif;
+  line-height: 1.4;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  background: #ffffff;
+  color: #000000;
+}

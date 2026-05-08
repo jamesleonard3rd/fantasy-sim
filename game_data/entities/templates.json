@@ -1,0 +1,110 @@
+{
+  "entities": [
+    {
+      "id": "adrien_valemont",
+      "name": "Lord Adrien Valemont",
+      "race": "Human",
+      "gender": "M",
+      "house": "House Valemont",
+      "role": "patriarch",
+      "age": 58,
+      "traits": ["Valemont Blood", "Natural Leader", "Strong", "Tough"],
+      "magic": [],
+      "notes": "Head of House Valemont, seasoned commander and warrior."
+    },
+    {
+      "id": "seraphine_valemont",
+      "name": "Seraphine Valemont",
+      "race": "Human",
+      "gender": "F",
+      "house": "House Valemont",
+      "role": "heir",
+      "age": 27,
+      "traits": ["Valemont Blood", "Beacon of Glory", "Charming"],
+      "magic": ["Fire"],
+      "notes": "Charismatic heir and powerful fire mage destined for command."
+    },
+    {
+      "id": "talandor_belovar",
+      "name": "Archmage Talandor Belovar",
+      "race": "Human",
+      "gender": "M",
+      "house": "House Belovar",
+      "role": "patriarch",
+      "age": 116,
+      "traits": ["Arcane Lineage"],
+      "magic": ["Fire", "Wind", "Life"],
+      "notes": "Patriarch of House Belovar, heir to the archmage’s legacy."
+    },
+    {
+      "id": "corrin_belovar",
+      "name": "Corrin Belovar",
+      "race": "Human",
+      "gender": "M",
+      "house": "House Belovar",
+      "role": "member",
+      "age": 38,
+      "traits": ["Arcane Lineage"],
+      "magic": ["Light"],
+      "notes": ""
+    },
+    {
+      "id": "kael_rhaen",
+      "name": "Kael Rhaen",
+      "race": "Human",
+      "gender": "M",
+      "house": "House Rhaen",
+      "role": "patriarch",
+      "age": 47,
+      "traits": ["Flame Within", "Strong", "Tough"],
+      "magic": ["Fire"],
+      "notes": ""
+    },
+    {
+      "id": "mira_rhaen",
+      "name": "Mira Rhaen",
+      "race": "Human",
+      "gender": "F",
+      "house": "House Rhaen",
+      "role": "scion",
+      "age": 22,
+      "traits": ["Flame Within", "Quick", "Charming"],
+      "magic": ["Fire"],
+      "notes": ""
+    },
+    {
+      "id": "lady_selene_eidra",
+      "name": "Lady Selene Eidra",
+      "race": "Human",
+      "gender": "F",
+      "house": "House Eidra",
+      "role": "matriarch",
+      "age": 61,
+      "traits": ["Blood of the First King (Awakened)", "Echo of Radiance", "Charming"],
+      "magic": ["Light"],
+      "notes": ""
+    },
+    {
+      "id": "darian_eidra",
+      "name": "Darian Eidra",
+      "race": "Human",
+      "gender": "M",
+      "house": "House Eidra",
+      "role": "heir",
+      "age": 28,
+      "traits": ["Blood of the First King (Stirring)", "Strong"],
+      "magic": [],
+      "notes": ""
+    }
+  ],
+  "relationships": [
+    { "from": "adrien_valemont", "to": "seraphine_valemont", "type": "parent", "opinion": 70 },
+    { "from": "seraphine_valemont", "to": "adrien_valemont", "type": "child", "opinion": 65 },
+    { "from": "talandor_belovar", "to": "corrin_belovar", "type": "parent", "opinion": 60 },
+    { "from": "corrin_belovar", "to": "talandor_belovar", "type": "child", "opinion": 55 },
+    { "from": "kael_rhaen", "to": "mira_rhaen", "type": "parent", "opinion": 65 },
+    { "from": "mira_rhaen", "to": "kael_rhaen", "type": "child", "opinion": 60 },
+    { "from": "lady_selene_eidra", "to": "darian_eidra", "type": "parent", "opinion": 70 },
+    { "from": "darian_eidra", "to": "lady_selene_eidra", "type": "child", "opinion": 65 }
+  ]
+}

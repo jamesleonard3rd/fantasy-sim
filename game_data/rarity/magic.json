@@ -44,9 +44,14 @@
             "subtypes": []
         }
     ],
+    "race_magic_counts": {
+        "Human": {"0": 250, "1": 100, "2": 5},
+        "High Elf": {"1": 100, "2": 20, "3": 2},
+        "Greenskin": {"0": 100, "1": 5}
+    },
     "race_modifiers": {
-        "Human": {"no_magic": 0.1},
-        "High Elf": {"no_magic": 0},
-        "Greenskin": {"no_magic": 10}
+        "Human": {},
+        "High Elf": {},
+        "Greenskin": {}
     }
 }
