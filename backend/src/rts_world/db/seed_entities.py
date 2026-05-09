@@ -27,6 +27,23 @@ def fetch_lookup(conn: psycopg.Connection, table: str) -> Dict[str, int]:
         return {row[1]: row[0] for row in cur.fetchall()}
 
 
+def fetch_house_lookup(conn: psycopg.Connection) -> Dict[str, int]:
+    """Map house name -> faction_id.
+
+    Houses are factions (`factions.kind = 'house'`); the lineage rules table
+    is keyed by `faction_id`. So the lookup we need joins both.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT f.name, f.id
+            FROM factions f
+            JOIN houses h ON h.faction_id = f.id
+            """
+        )
+        return {row[0]: int(row[1]) for row in cur.fetchall()}
+
+
 def insert_entity(conn: psycopg.Connection, name: str, race_id: int, subrace_id: int | None = None) -> int:
     with conn.cursor() as cur:
         cur.execute(
@@ -55,6 +72,38 @@ def insert_entity_traits(conn: psycopg.Connection, entity_id: int, trait_names: 
         )
 
 
+def insert_entity_house(
+    conn: psycopg.Connection,
+    entity_id: int,
+    house_name: str | None,
+    role: str | None,
+    house_lookup: Dict[str, int],
+) -> None:
+    """Set the entity's house. Each entity has at most one house — the PK on
+    `entity_houses(entity_id)` enforces it, and an upsert on the same key
+    means re-seeding cleanly switches an entity's house if templates change.
+    """
+    if not house_name:
+        return
+    house_id = house_lookup.get(house_name)
+    if house_id is None:
+        raise ValueError(
+            f"Unknown house '{house_name}' for entity_id {entity_id}; "
+            "did you run seed_houses() first?"
+        )
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO entity_houses (entity_id, house_id, role)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (entity_id) DO UPDATE
+                SET house_id = EXCLUDED.house_id,
+                    role     = EXCLUDED.role
+            """,
+            (entity_id, house_id, role or "member"),
+        )
+
+
 def insert_relationships(conn: psycopg.Connection, rels: List[Dict[str, Any]], id_map: Dict[str, int]) -> None:
     if not rels:
         return
@@ -73,7 +122,13 @@ def insert_relationships(conn: psycopg.Connection, rels: List[Dict[str, Any]], i
         )
 
 
-def seed_templates(conn: psycopg.Connection, templates: Dict[str, Any], race_lookup: Dict[str, int], trait_lookup: Dict[str, int]) -> Dict[str, int]:
+def seed_templates(
+    conn: psycopg.Connection,
+    templates: Dict[str, Any],
+    race_lookup: Dict[str, int],
+    trait_lookup: Dict[str, int],
+    house_lookup: Dict[str, int],
+) -> Dict[str, int]:
     id_map: Dict[str, int] = {}
     for ent in templates.get("entities", []):
         entity_data = generate_entity_from_template(ent)
@@ -84,6 +139,13 @@ def seed_templates(conn: psycopg.Connection, templates: Dict[str, Any], race_loo
             raise ValueError(f"Unknown race '{race_name}' in template '{template_id}'")
         entity_id = insert_entity(conn, entity_data["name"], race_id)
         insert_entity_traits(conn, entity_id, entity_data.get("traits", []), trait_lookup)
+        insert_entity_house(
+            conn,
+            entity_id,
+            entity_data.get("house"),
+            entity_data.get("role"),
+            house_lookup,
+        )
         id_map[template_id] = entity_id
     insert_relationships(conn, templates.get("relationships", []), id_map)
     return id_map
@@ -113,9 +175,10 @@ def main() -> None:
     with get_connection() as conn:
         race_lookup = fetch_lookup(conn, "races")
         trait_lookup = fetch_lookup(conn, "traits")
+        house_lookup = fetch_house_lookup(conn)
 
         if not args.skip_templates:
-            seed_templates(conn, templates, race_lookup, trait_lookup)
+            seed_templates(conn, templates, race_lookup, trait_lookup, house_lookup)
 
         if args.random_count > 0:
             seed_random_entities(conn, args.random_count, race_lookup, trait_lookup)

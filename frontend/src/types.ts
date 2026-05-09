@@ -8,6 +8,7 @@ export type Summary = {
   races: number;
   subraces: number;
   relationships: number;
+  houses: number;
 };
 
 export type EntitySummary = {
@@ -17,6 +18,9 @@ export type EntitySummary = {
   race: string | null;
   subrace: string | null;
   zone: string | null;
+  house_id: number | null;
+  house_name: string | null;
+  house_role: string | null;
   created_at: string;
 };
 
@@ -65,6 +69,16 @@ export type EntityRelationship = {
   last_updated: string;
 };
 
+export type EntityHouseMembership = {
+  id: number;
+  name: string;
+  notes: string | null;
+  type: string | null;
+  default_surname: string | null;
+  role: string;
+  joined_at: string;
+};
+
 export type EntityDetail = EntitySummary & {
   traits: EntityTrait[];
   factions: EntityFactionMembership[];
@@ -74,27 +88,53 @@ export type EntityDetail = EntitySummary & {
   zone: EntityZone;
   position: EntityPosition;
   relationships: EntityRelationship[];
+  houses: EntityHouseMembership[];
+  house: EntityHouseMembership | null;
 };
+
+export type FactionKind =
+  | "generic"
+  | "house"
+  | "order"
+  | "guild"
+  | "school"
+  | "cult"
+  | "company";
 
 export type FactionSummary = {
   id: number;
   name: string;
   description: string | null;
+  kind: FactionKind;
   parent_id: number | null;
   parent_name: string | null;
   member_count: number;
   child_count: number;
   is_school: boolean;
+  is_house: boolean;
 };
 
 export type FactionMember = {
   id: number;
   name: string;
   rank: string;
-  reputation: number;
+  reputation: number | null;
+  source: "faction" | "house";
 };
 
-export type FactionChild = { id: number; name: string };
+export type FactionChild = { id: number; name: string; kind: FactionKind };
+
+export type FactionHouseBrief = {
+  default_surname: string | null;
+  spawn_min: number | null;
+  forced_traits: string[] | null;
+  forced_magic: string[] | null;
+  house_trait_counts: Record<string, number> | null;
+  house_trait_weights: Record<string, number> | null;
+  normal_trait_weight_mults: Record<string, number> | null;
+  magic_type_counts: Record<string, number> | null;
+  magic_weights: Record<string, number> | null;
+} | null;
 
 export type FactionSchoolBrief = {
   prestige: number;
@@ -109,10 +149,14 @@ export type FactionSchoolBrief = {
   entry_requirements: unknown;
 } | null;
 
-export type FactionDetail = FactionSummary & {
+export type FactionDetail = Omit<
+  FactionSummary,
+  "member_count" | "child_count" | "is_school" | "is_house"
+> & {
   children: FactionChild[];
   members: FactionMember[];
   school: FactionSchoolBrief;
+  house: FactionHouseBrief;
 };
 
 export type SchoolSummary = {
@@ -175,4 +219,42 @@ export type Race = {
   name: string;
   entity_count: number;
   subraces: { id: number; name: string }[];
+};
+
+export type HouseSummary = {
+  id: number;
+  name: string;
+  type: string | null;
+  default_surname: string | null;
+  notes: string | null;
+  spawn_min: number | null;
+  member_count: number;
+};
+
+export type HouseMember = {
+  id: number;
+  name: string;
+  role: string;
+  joined_at: string;
+  race: string | null;
+  subrace: string | null;
+};
+
+export type HouseAffiliatedFaction = {
+  id: number;
+  name: string;
+  kind: FactionKind;
+  member_count: number;
+};
+
+export type HouseDetail = HouseSummary & {
+  forced_traits: string[] | null;
+  forced_magic: string[] | null;
+  house_trait_counts: Record<string, number> | null;
+  house_trait_weights: Record<string, number> | null;
+  normal_trait_weight_mults: Record<string, number> | null;
+  magic_type_counts: Record<string, number> | null;
+  magic_weights: Record<string, number> | null;
+  members: HouseMember[];
+  affiliated_factions: HouseAffiliatedFaction[];
 };

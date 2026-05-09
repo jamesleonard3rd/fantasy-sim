@@ -713,6 +713,91 @@
   box-shadow: 0 0 10px currentColor;
 }
 
+/* Houses widget */
+.house-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.house-item {
+  display: grid;
+  grid-template-columns: 36px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid transparent;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.house-item:hover {
+  background: rgba(168, 85, 247, 0.06);
+  border-color: rgba(168, 85, 247, 0.18);
+}
+
+.house-crest {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background:
+    radial-gradient(
+      circle at 30% 30%,
+      rgba(255, 255, 255, 0.25),
+      transparent 60%
+    ),
+    linear-gradient(135deg, #7c3aed, #ec4899);
+  display: grid;
+  place-items: center;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 1px;
+  color: white;
+  box-shadow: 0 4px 12px rgba(124, 58, 237, 0.35);
+}
+
+.house-body {
+  min-width: 0;
+}
+
+.house-name {
+  font-family: var(--font-display);
+  font-size: 14px;
+  letter-spacing: 0.5px;
+  color: white;
+}
+
+.house-notes-line {
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.house-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+/* House notes block (in detail view) */
+.house-notes {
+  margin: 0;
+  padding: 12px 14px;
+  border-left: 2px solid var(--border-strong);
+  background: rgba(168, 85, 247, 0.06);
+  border-radius: 0 8px 8px 0;
+  color: var(--text);
+  font-style: italic;
+  line-height: 1.5;
+}
+
 /* Schools widget */
 .school-grid {
   display: grid;

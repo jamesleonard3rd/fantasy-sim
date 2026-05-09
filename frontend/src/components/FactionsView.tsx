@@ -10,19 +10,28 @@ function FactionsView({ refreshKey }: { refreshKey: number }) {
       detailEndpoint={(id) => `/factions/${id}`}
       getId={(f) => f.id}
       getTitle={(f) => f.name}
-      getSubtitle={(f) =>
-        f.parent_name ? `Sub-faction of ${f.parent_name}` : "Top-level faction"
-      }
+      getSubtitle={(f) => {
+        const kindLabel = f.kind !== "generic" ? capitalize(f.kind) : null;
+        const parentLabel = f.parent_name
+          ? `Sub-faction of ${f.parent_name}`
+          : null;
+        return [kindLabel, parentLabel].filter(Boolean).join(" · ") || "Faction";
+      }}
       getMeta={(f) =>
         `${f.member_count} members · ${f.child_count} children${
           f.is_school ? " · runs a school" : ""
-        }`
+        }${f.is_house ? " · noble house" : ""}`
       }
       searchPlaceholder="Search factions…"
       emptyMessage="No factions yet."
       renderDetail={(faction) => <FactionDetailPanel faction={faction} />}
     />
   );
+}
+
+function capitalize(value: string): string {
+  if (!value) return value;
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 function FactionDetailPanel({ faction }: { faction: FactionDetail }) {
@@ -35,18 +44,42 @@ function FactionDetailPanel({ faction }: { faction: FactionDetail }) {
             <div className="detail-subtitle">{faction.description}</div>
           )}
         </div>
-        <Tag tone="info">#{faction.id}</Tag>
+        <div className="chip-row">
+          <Tag tone={kindTone(faction.kind)}>{capitalize(faction.kind)}</Tag>
+          <Tag tone="info">#{faction.id}</Tag>
+        </div>
       </div>
 
       <div className="field-grid">
+        <Field label="Kind" value={capitalize(faction.kind)} />
         <Field label="Parent" value={faction.parent_name ?? "—"} />
         <Field label="Members" value={faction.members.length} />
         <Field label="Sub-factions" value={faction.children.length} />
-        <Field
-          label="School?"
-          value={faction.school ? <Tag tone="success">Yes</Tag> : "No"}
-        />
       </div>
+
+      {faction.house && (
+        <Section title="House details">
+          <div className="field-grid">
+            <Field
+              label="Default surname"
+              value={faction.house.default_surname ?? "—"}
+            />
+            <Field
+              label="Spawn minimum"
+              value={faction.house.spawn_min ?? "—"}
+            />
+          </div>
+          {(faction.house.forced_traits?.length ?? 0) > 0 && (
+            <div className="chip-row" style={{ marginTop: 8 }}>
+              {(faction.house.forced_traits ?? []).map((t) => (
+                <Tag key={t} tone="warning">
+                  {t}
+                </Tag>
+              ))}
+            </div>
+          )}
+        </Section>
+      )}
 
       {faction.school && (
         <Section title="School details">
@@ -117,18 +150,20 @@ function FactionDetailPanel({ faction }: { faction: FactionDetail }) {
             <thead>
               <tr>
                 <th>Entity</th>
-                <th>Rank</th>
+                <th>{faction.house ? "Role" : "Rank"}</th>
                 <th>Reputation</th>
               </tr>
             </thead>
             <tbody>
               {faction.members.map((m) => (
-                <tr key={m.id}>
+                <tr key={`${m.source}-${m.id}`}>
                   <td>{m.name}</td>
                   <td>
-                    <Tag tone="neutral">{m.rank}</Tag>
+                    <Tag tone={m.source === "house" ? "warning" : "neutral"}>
+                      {m.rank}
+                    </Tag>
                   </td>
-                  <td>{m.reputation}</td>
+                  <td>{m.reputation ?? "—"}</td>
                 </tr>
               ))}
             </tbody>
@@ -137,6 +172,23 @@ function FactionDetailPanel({ faction }: { faction: FactionDetail }) {
       </Section>
     </div>
   );
+}
+
+function kindTone(
+  kind: FactionDetail["kind"],
+): "warning" | "info" | "success" | "neutral" {
+  switch (kind) {
+    case "house":
+      return "warning";
+    case "school":
+      return "success";
+    case "order":
+    case "guild":
+    case "company":
+      return "info";
+    default:
+      return "neutral";
+  }
 }
 
 export default FactionsView;

@@ -3,6 +3,7 @@ import "./App.css";
 import TopBar from "./components/TopBar";
 import Dashboard from "./components/Dashboard";
 import EntitiesView from "./components/EntitiesView";
+import HousesView from "./components/HousesView";
 import FactionsView from "./components/FactionsView";
 import SchoolsView from "./components/SchoolsView";
 import ItemsView from "./components/ItemsView";
@@ -52,6 +53,8 @@ function renderSection(active: SectionId, refreshKey: number) {
       return <Dashboard refreshKey={refreshKey} />;
     case "entities":
       return <EntitiesView refreshKey={refreshKey} />;
+    case "houses":
+      return <HousesView refreshKey={refreshKey} />;
     case "factions":
       return <FactionsView refreshKey={refreshKey} />;
     case "schools":

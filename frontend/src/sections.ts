@@ -1,6 +1,7 @@
 export type SectionId =
   | "dashboard"
   | "entities"
+  | "houses"
   | "factions"
   | "schools"
   | "items"
@@ -34,6 +35,7 @@ export const SECTIONS: Section[] = [
   { id: "dashboard", label: "Throne Room", group: "overview", status: "live" },
 
   { id: "entities", label: "Entities", group: "characters", status: "live" },
+  { id: "houses", label: "Houses", group: "characters", status: "live" },
   { id: "factions", label: "Factions", group: "characters", status: "live" },
   { id: "schools", label: "Schools", group: "characters", status: "live" },
 

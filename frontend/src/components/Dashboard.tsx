@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type {
   EntitySummary,
   FactionSummary,
+  HouseSummary,
   SchoolSummary,
   Summary,
 } from "../types";
@@ -13,17 +14,18 @@ type DashboardData = {
   entities: EntitySummary[];
   factions: FactionSummary[];
   schools: SchoolSummary[];
+  houses: HouseSummary[];
 };
 
 const KEY_TILES: { key: keyof Summary; label: string }[] = [
   { key: "entities", label: "Entities" },
+  { key: "houses", label: "Houses" },
   { key: "factions", label: "Factions" },
   { key: "schools", label: "Schools" },
   { key: "items", label: "Items" },
   { key: "abilities", label: "Abilities" },
   { key: "traits", label: "Traits" },
   { key: "relationships", label: "Bonds" },
-  { key: "races", label: "Races" },
 ];
 
 function Dashboard({ refreshKey }: { refreshKey: number }) {
@@ -39,10 +41,11 @@ function Dashboard({ refreshKey }: { refreshKey: number }) {
       apiGet<EntitySummary[]>("/entities"),
       apiGet<FactionSummary[]>("/factions"),
       apiGet<SchoolSummary[]>("/schools"),
+      apiGet<HouseSummary[]>("/houses"),
     ])
-      .then(([summary, entities, factions, schools]) => {
+      .then(([summary, entities, factions, schools, houses]) => {
         if (cancelled) return;
-        setData({ summary, entities, factions, schools });
+        setData({ summary, entities, factions, schools, houses });
       })
       .catch((err: Error) => {
         if (!cancelled) setError(err.message);
@@ -55,13 +58,19 @@ function Dashboard({ refreshKey }: { refreshKey: number }) {
   if (error) return <ErrorBox message={error} />;
   if (!data) return <Loader label="Surveying the realm…" />;
 
-  const { summary, entities, factions, schools } = data;
+  const { summary, entities, factions, schools, houses } = data;
   const featured = entities[0];
   const recentEntities = entities.slice(0, 6);
   const topFactions = [...factions]
     .sort((a, b) => b.member_count - a.member_count || a.name.localeCompare(b.name))
     .slice(0, 6);
   const sortedSchools = [...schools].sort((a, b) => b.prestige - a.prestige);
+  const topHouses = [...houses]
+    .sort(
+      (a, b) =>
+        b.member_count - a.member_count || a.name.localeCompare(b.name),
+    )
+    .slice(0, 6);
 
   return (
     <div className="dash">
@@ -73,8 +82,9 @@ function Dashboard({ refreshKey }: { refreshKey: number }) {
             {entities.length} souls walk the world.
           </h1>
           <p className="hero-sub">
-            {factions.length} factions vie for power across {schools.length}{" "}
-            schools, bound by {summary.relationships} relationships.
+            {houses.length} noble houses and {factions.length} factions vie for
+            power across {schools.length} schools, bound by{" "}
+            {summary.relationships} relationships.
           </p>
         </div>
         <div className="hero-stats">
@@ -101,6 +111,15 @@ function Dashboard({ refreshKey }: { refreshKey: number }) {
             />
             <NewsItem
               tone="success"
+              title={`${houses.length} noble houses recognized`}
+              meta={
+                topHouses[0]
+                  ? `Largest: ${topHouses[0].name} (${topHouses[0].member_count} members)`
+                  : "Awaiting templates."
+              }
+            />
+            <NewsItem
+              tone="success"
               title={`${schools.length} schools have opened their gates`}
               meta={
                 sortedSchools[0]
@@ -112,11 +131,6 @@ function Dashboard({ refreshKey }: { refreshKey: number }) {
               tone="warning"
               title="Towns & settlements pending"
               meta="The Realm tab will fill in once the world map is implemented."
-            />
-            <NewsItem
-              tone="neutral"
-              title="API connected"
-              meta="Live state served from FastAPI on :8000."
             />
           </ul>
         </section>
@@ -207,6 +221,43 @@ function Dashboard({ refreshKey }: { refreshKey: number }) {
                 ))}
               </tbody>
             </table>
+          )}
+        </section>
+
+        <section className="panel widget">
+          <header className="widget-header">
+            <h3>Noble Houses</h3>
+            <span className="muted small">By living members</span>
+          </header>
+          {topHouses.length === 0 ? (
+            <div className="muted">No houses founded yet.</div>
+          ) : (
+            <ul className="house-list">
+              {topHouses.map((h) => (
+                <li className="house-item" key={h.id}>
+                  <div className="house-crest">
+                    {(h.default_surname ?? h.name).slice(0, 2).toUpperCase()}
+                  </div>
+                  <div className="house-body">
+                    <div className="house-name">{h.name}</div>
+                    {h.notes && (
+                      <div className="muted small house-notes-line">
+                        {h.notes}
+                      </div>
+                    )}
+                  </div>
+                  <div className="house-meta">
+                    <Tag tone="info">
+                      {h.member_count}{" "}
+                      {h.member_count === 1 ? "member" : "members"}
+                    </Tag>
+                    {h.type && (
+                      <span className="muted small">{h.type}</span>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
           )}
         </section>
 

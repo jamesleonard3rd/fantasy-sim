@@ -52,12 +52,62 @@ CREATE TABLE IF NOT EXISTS factions (
     parent_id   INT REFERENCES factions(id) ON DELETE SET NULL
 );
 
+-- Discriminator for what flavor of organization this faction is. Houses,
+-- knight orders, merchant guilds, schools, cults, etc. all live in factions
+-- with a 1:1 detail table (e.g. houses, schools) hanging off them when they
+-- need extra columns. 'generic' is the default for plain political factions.
+ALTER TABLE factions
+    ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'generic';
+ALTER TABLE factions
+    DROP CONSTRAINT IF EXISTS factions_kind_check;
+ALTER TABLE factions
+    ADD CONSTRAINT factions_kind_check
+    CHECK (kind IN ('generic','house','order','guild','school','cult','company'));
+
 CREATE TABLE IF NOT EXISTS entity_factions (
     entity_id INT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
     faction_id INT NOT NULL REFERENCES factions(id) ON DELETE CASCADE,
     rank TEXT NOT NULL CHECK (rank IN ('member', 'officer', 'leader', 'ally')),
     reputation SMALLINT DEFAULT 0 CHECK (reputation BETWEEN -100 AND 100),
     PRIMARY KEY (entity_id, faction_id)
+);
+
+-- Houses are factions (`factions.kind = 'house'`) with extra lineage rules.
+-- Mirrors the schools-as-faction-detail pattern: name + description + parent
+-- live in factions; everything below is house-specific.
+--
+-- The previous standalone houses + entity_houses tables (with their own id
+-- and a many-to-many link) are dropped here so re-applying schema.sql
+-- migrates a fresh-ish DB cleanly. There is no production data to preserve.
+DROP TABLE IF EXISTS entity_houses;
+DROP TABLE IF EXISTS houses;
+
+CREATE TABLE IF NOT EXISTS houses (
+    faction_id INT PRIMARY KEY REFERENCES factions(id) ON DELETE CASCADE,
+    -- Sub-classification within the kind='house' factions: 'noble',
+    -- 'merchant', 'royal', etc. Distinct from `factions.kind`, which says
+    -- "this faction is a house"; this says "what flavor of house".
+    type TEXT,
+    default_surname TEXT,
+    spawn_min INT,
+    forced_traits JSONB,
+    forced_magic JSONB,
+    house_trait_counts JSONB,
+    house_trait_weights JSONB,
+    normal_trait_weight_mults JSONB,
+    magic_type_counts JSONB,
+    magic_weights JSONB
+);
+
+-- House membership: each entity belongs to at most ONE house. The PRIMARY
+-- KEY on entity_id is what enforces that — the database literally cannot
+-- store two house rows for the same entity. Other organizations (orders,
+-- guilds, etc.) go through entity_factions and stack freely on top of this.
+CREATE TABLE IF NOT EXISTS entity_houses (
+    entity_id INT PRIMARY KEY REFERENCES entities(id) ON DELETE CASCADE,
+    house_id INT NOT NULL REFERENCES houses(faction_id) ON DELETE CASCADE,
+    role TEXT NOT NULL DEFAULT 'member',
+    joined_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
 );
 
 -- Regions: top-level partition the world simulation iterates over.
@@ -190,6 +240,8 @@ CREATE INDEX IF NOT EXISTS idx_entity_zones_zone ON entity_zones(zone);
 CREATE INDEX IF NOT EXISTS idx_entity_zones_region ON entity_zones(region_id);
 CREATE INDEX IF NOT EXISTS idx_entity_factions_faction ON entity_factions(faction_id);
 CREATE INDEX IF NOT EXISTS idx_entity_traits_trait ON entity_traits(trait_id);
+CREATE INDEX IF NOT EXISTS idx_entity_houses_house ON entity_houses(house_id);
+CREATE INDEX IF NOT EXISTS idx_factions_kind ON factions(kind);
 CREATE INDEX IF NOT EXISTS idx_relationships_subject ON relationships(subject_entity_id);
 CREATE INDEX IF NOT EXISTS idx_relationships_target ON relationships(target_entity_id);
 CREATE INDEX IF NOT EXISTS idx_world_events_region_time

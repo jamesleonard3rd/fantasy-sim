@@ -241,37 +241,53 @@ Design rules:
   * `runner.py` is just the loop wiring. No game logic lives here.
 
 --------------------------------------------------------------------------------
-8. MINIMUM VIABLE FIRST SLICE (MVP)
+8. MINIMUM VIABLE FIRST SLICE (MVP) — DONE
 --------------------------------------------------------------------------------
 
-Resist building the whole sim before running it end to end. The smallest
-useful proof:
+Status: shipped May 2026. All eight items below are implemented and the
+end-to-end loop is exercised by the pytest suite under `tests/`.
 
-  1. Add `RegionState` dataclass: entities (list of dicts), relationships
-     (list of dicts), region_row.
-  2. Implement `regions.load_region_state(region_id) -> RegionState`
-     using one wide SELECT per relevant table, filtered by region_id.
-  3. Implement `regions.write_region_state(state, events)` doing one
-     `executemany` per changed table + `executemany` insert into
-     `world_events`. Wrap in a single BEGIN/COMMIT.
-  4. Implement `tick.tick_region(region_id)`:
-        load -> simulate (no-op stub returning one "tick happened" event)
-        -> write -> update regions.last_tick_at and world_clock.
-  5. Implement `scheduler.run_forever()` with a heap of due regions.
-     Skip `paused`. Sleep until next due.
-  6. Add CLI entry: `python -m rts_world.sim.runner` with subcommands:
-        once     -- run one tick of one region (for tests / debugging)
-        forever  -- the real loop
-  7. Add a small seeding helper: create a few `regions` rows and assign
-     existing entities to them via `entity_zones.region_id`.
-  8. Add a pytest that spins up against the real DB (or a temp one):
-        - seeds one region with a few entities
-        - calls tick_region(...)
-        - asserts a row appears in world_events
-        - asserts regions.last_tick_at advanced
+  [x] 1. `RegionState` dataclass (sim/state.py): entities, relationships,
+        region row, dirty-tracking sets, an entities_by_id index, and
+        helper methods `mark_entity_dirty` / `mark_relationship_dirty`.
+  [x] 2. `regions.load_region_state(conn, region_id) -> RegionState | None`
+        using one wide SELECT per relevant table (entities via JOIN
+        entity_zones, then relationships filtered to in-region pairs).
+  [x] 3. `regions.write_region_state(conn, state, events, *, now)` doing
+        one `executemany` per dirty table + one `executemany` INSERT into
+        `world_events`. Wrapped in a single BEGIN/COMMIT by the
+        orchestrator.
+  [x] 4. `tick.tick_region(region_id)` orchestrator:
+        load -> systems (heartbeat stub) -> write -> advance world_clock
+        -> update regions.last_tick_at -> COMMIT. Skips no-op when the
+        region is paused. Returns a `TickResult` dataclass for logging.
+  [x] 5. `scheduler.Scheduler.run_forever()` with a heap of
+        (due_at_unix, region_id). Skips paused regions, refreshes the
+        queue periodically (default 30s) so newly-created/un-paused
+        regions get picked up, and reschedules with a 60s fallback if a
+        tick raises.
+  [x] 6. CLI: `python -m rts_world.sim.runner` and the convenience shim
+        `python backend/scripts/sim.py` with subcommands:
+            once          -- tick one region once (--region-id N or
+                             --region-name "...")
+            forever       -- the real scheduler loop
+            status        -- print regions + world_clock state
+            seed-regions  -- create demo regions + assign entities
+  [x] 7. Seeding helper: `runner.cmd_seed_regions` creates up to 3 demo
+        regions (Whisperwood / Ironwatch Hold / Mire of Ash) and
+        round-robins unassigned entities into them, capped by
+        --max-per-region (default 300, matching §2).
+  [x] 8. pytest integration tests in `tests/test_sim_tick.py`:
+            - test_tick_region_emits_event_and_advances_clocks (asserts
+              world_events row, last_tick_at recency, world_clock+=1)
+            - test_tick_region_paused_is_noop
+            - test_load_region_state_returns_none_for_unknown
+        Conftest skips cleanly when the DB is unreachable so contributors
+        without local Postgres aren't blocked.
 
 After this MVP, every new behavior is just a file under `sim/systems/`
-hooked into `tick.py`. The architecture never has to change.
+hooked into `default_systems()` in `sim/systems/__init__.py`. The
+architecture never has to change.
 
 --------------------------------------------------------------------------------
 9. SYSTEMS TO BUILD AFTER THE MVP (suggested order)
@@ -333,9 +349,10 @@ After (6) and (7) the world is genuinely "alive" between player visits.
     comment in the Unreal codebase too.
 
 --------------------------------------------------------------------------------
-11. WHAT'S BEEN DONE (cleanup pass, May 2026)
+11. WHAT'S BEEN DONE
 --------------------------------------------------------------------------------
 
+11.1 Cleanup pass (early May 2026)
   * .gitignore expanded; venv/ (12k files), all __pycache__ (4.7k),
     and .DS_Store untracked.
   * Dead `seed_data.sql` deleted; JSON pipeline is the only seed path.
@@ -350,19 +367,109 @@ After (6) and (7) the world is genuinely "alive" between player visits.
     entity_zones.region_id and supporting indexes.
   * Verified: schema applies cleanly, full seed loads, ping works.
 
+11.2 Sim framework MVP (late May 2026)
+  * `backend/src/rts_world/sim/` package created with the §7 layout:
+      - state.py     -- RegionState, PendingEvent, TickContext (pure data)
+      - regions.py   -- load/write region working set; only file that
+                        SELECTs/UPDATEs per-entity tables
+      - clock.py     -- read/advance world_clock (TICKS_PER_GAME_DAY=240)
+      - events.py    -- bulk_insert_events into world_events
+      - tick.py      -- tick_region(region_id) orchestrator + TickResult
+      - scheduler.py -- heap-based loop with periodic queue refresh and
+                        bounded sleep so SIGINT is observed promptly
+      - runner.py    -- CLI (once/forever/status/seed-regions)
+      - systems/__init__.py -- default_systems() registry
+      - systems/heartbeat.py -- first stub system; emits "region.tick"
+  * Convenience launcher `backend/scripts/sim.py` that adds the right
+    sys.path so the CLI works from a fresh shell without PYTHONPATH.
+  * Makefile targets: sim-status, sim-seed, sim-once REGION=N,
+    sim-forever, test. `make check` now runs db-ping + type-check + test.
+  * Integration tests in `tests/test_sim_tick.py` (3 tests, all green
+    against local Postgres).
+  * mypy clean on the entire sim/ package (`mypy backend/src/rts_world/sim/`
+    -> 0 errors). Pre-existing mypy errors in api/main.py and
+    backend/main.py are not from this work and were left alone.
+  * Verified end-to-end: tick_region writes a world_events row, advances
+    regions.last_tick_at, and bumps world_clock.game_tick by exactly 1.
+
+11.3 Conventions baked into the code (so they survive future edits)
+  * Only sim/regions.py, sim/clock.py, sim/events.py touch psycopg.
+    Everything under sim/systems/ and sim/tick.py is pure Python over
+    in-memory state.
+  * One BEGIN/COMMIT per region tick; `tick_region` opens its own
+    connection unless the caller (tests) passes one in.
+  * Systems get (state, ctx) and *return* PendingEvent rows; they never
+    write to the DB and never call random.* directly (use ctx.rng so
+    behaviour is deterministic given a seed).
+  * Systems mutating per-entity rows MUST call
+    state.mark_entity_dirty(...) / state.mark_relationship_dirty(...)
+    or the change won't be flushed.
+  * write_region_state already implements the relationships flush; the
+    entities flush is a placeholder branch (no current system mutates
+    entity rows). Wire it up when the first system needs it.
+
 --------------------------------------------------------------------------------
 12. IMMEDIATE NEXT STEPS
 --------------------------------------------------------------------------------
 
-  [ ] Create `backend/src/rts_world/sim/` package with the layout in §7.
-  [ ] Implement the MVP slice in §8 (load -> no-op simulate -> write +
-      scheduler + CLI runner + first integration test).
-  [ ] Seed 2–3 regions and assign existing entities to them via
-      `entity_zones.region_id`.
-  [ ] First real system: opinion drift (§9.1).
+  [ ] First real system: opinion drift (§9.1) in
+      `sim/systems/relationships.py`. Each tick, nudge every relationship
+      one step toward 0 and mark it dirty. Register in default_systems().
+      Add a unit test (pure, no DB) that constructs a tiny RegionState
+      and asserts opinions move correctly. The bulk-UPDATE path in
+      regions.write_region_state already handles this — no DB-layer
+      changes required.
+
+  [ ] Once a real system exists, wire up the entities flush in
+      regions.write_region_state (currently a `pass` placeholder). At
+      minimum: pick the per-entity scalar columns the new systems mutate,
+      add them to the SELECT in load_region_state, and add the matching
+      executemany UPDATE. Keep all column names in one place to avoid
+      drift.
+
+  [ ] Backfill `entity_zones.region_id` from the legacy `zone` text and
+      start populating it on entity creation (seed_entities.py). Without
+      this, `sim seed-regions` is the only way entities end up in a
+      region, which is fine for the demo but blocks real content.
+
+  [ ] Tighten api/main.py mypy (13 missing return-type annotations) so
+      `make check` is fully green. Untouched in the sim work to keep the
+      diff focused.
+
   [ ] Document the Unreal-side contract (paused flag, world_events
-      consumer, hydrate-on-entry / flush-on-exit) in a separate doc
-      once the Unreal project takes shape.
+      consumer, hydrate-on-entry / flush-on-exit) in a separate doc once
+      the Unreal project takes shape.
+
+--------------------------------------------------------------------------------
+13. QUICK-START FOR A FRESH CONTEXT WINDOW
+--------------------------------------------------------------------------------
+
+If you're picking this up cold:
+
+  1. Read §5 (architecture), §7 (module layout), and §11.3 (conventions).
+     Everything else is justification.
+  2. Apply schema + seed lookups + seed entities if needed:
+        python backend/scripts/init_db.py
+        python -m src.rts_world.db.seed_entities --random-count 50
+            (run from backend/, or use the existing patterns)
+  3. Create demo regions and assign entities:
+        python backend/scripts/sim.py seed-regions
+  4. See what's there:
+        python backend/scripts/sim.py status
+  5. Hand-tick one region (debug path):
+        python backend/scripts/sim.py once --region-id 1
+  6. Run the tests:
+        pytest -v
+  7. Run the loop for real:
+        python backend/scripts/sim.py forever
+
+To add a new behaviour:
+  1. Drop a file under backend/src/rts_world/sim/systems/. Export one
+     function: `def my_system(state, ctx) -> list[PendingEvent]: ...`
+  2. Mutate state in place; mark dirty rows; return events.
+  3. Register in sim/systems/__init__.py default_systems().
+  4. Add a unit test in tests/ that constructs a RegionState by hand.
+     No DB needed — systems are pure.
 
 --------------------------------------------------------------------------------
 END

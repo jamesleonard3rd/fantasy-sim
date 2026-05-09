@@ -38,6 +38,7 @@ def summary():
         "races": "SELECT COUNT(*) FROM races",
         "subraces": "SELECT COUNT(*) FROM subraces",
         "relationships": "SELECT COUNT(*) FROM relationships",
+        "houses": "SELECT COUNT(*) FROM houses",
     }
     out: dict[str, int] = {}
     with get_connection() as conn:
@@ -56,11 +57,14 @@ def list_entities():
     sql = """
         SELECT e.id, e.name, e.type, e.created_at,
                r.name AS race, sr.name AS subrace,
-               z.zone AS zone
+               z.zone AS zone,
+               hf.id AS house_id, hf.name AS house_name, eh.role AS house_role
         FROM entities e
         LEFT JOIN races r ON r.id = e.race_id
         LEFT JOIN subraces sr ON sr.id = e.subrace_id
         LEFT JOIN entity_zones z ON z.entity_id = e.id
+        LEFT JOIN entity_houses eh ON eh.entity_id = e.id
+        LEFT JOIN factions hf ON hf.id = eh.house_id
         ORDER BY e.id
         LIMIT 500
     """
@@ -180,6 +184,21 @@ def get_entity(entity_id: int):
             )
             entity["relationships"] = _rows_to_dicts(cur)
 
+            cur.execute(
+                """
+                SELECT hf.id, hf.name, hf.description AS notes,
+                       h.type, h.default_surname, eh.role, eh.joined_at
+                FROM entity_houses eh
+                JOIN houses h ON h.faction_id = eh.house_id
+                JOIN factions hf ON hf.id = eh.house_id
+                WHERE eh.entity_id = %s
+                """,
+                (entity_id,),
+            )
+            house_rows = _rows_to_dicts(cur)
+            entity["house"] = house_rows[0] if house_rows else None
+            entity["houses"] = house_rows  # 0 or 1 row; kept as list for the frontend
+
     return entity
 
 
@@ -187,12 +206,19 @@ def get_entity(entity_id: int):
 
 @app.get("/factions")
 def list_factions():
+    # member_count sums regular faction members AND house members. Houses
+    # store membership in entity_houses (one-row-per-entity), every other
+    # kind of faction stores it in entity_factions, and the two are
+    # mutually exclusive — so adding the counts is correct.
     sql = """
-        SELECT f.id, f.name, f.description,
+        SELECT f.id, f.name, f.description, f.kind,
                p.id AS parent_id, p.name AS parent_name,
-               (SELECT COUNT(*) FROM entity_factions ef WHERE ef.faction_id = f.id) AS member_count,
+               (SELECT COUNT(*) FROM entity_factions ef WHERE ef.faction_id = f.id)
+               + (SELECT COUNT(*) FROM entity_houses eh WHERE eh.house_id = f.id)
+                   AS member_count,
                (SELECT COUNT(*) FROM factions c WHERE c.parent_id = f.id) AS child_count,
-               EXISTS(SELECT 1 FROM schools s WHERE s.faction_id = f.id) AS is_school
+               EXISTS(SELECT 1 FROM schools s WHERE s.faction_id = f.id) AS is_school,
+               EXISTS(SELECT 1 FROM houses  h WHERE h.faction_id = f.id) AS is_house
         FROM factions f
         LEFT JOIN factions p ON p.id = f.parent_id
         ORDER BY f.name
@@ -209,7 +235,7 @@ def get_faction(faction_id: int):
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT f.id, f.name, f.description,
+                SELECT f.id, f.name, f.description, f.kind,
                        p.id AS parent_id, p.name AS parent_name
                 FROM factions f
                 LEFT JOIN factions p ON p.id = f.parent_id
@@ -223,20 +249,31 @@ def get_faction(faction_id: int):
             faction = base[0]
 
             cur.execute(
-                "SELECT id, name FROM factions WHERE parent_id = %s ORDER BY name",
+                "SELECT id, name, kind FROM factions WHERE parent_id = %s ORDER BY name",
                 (faction_id,),
             )
             faction["children"] = _rows_to_dicts(cur)
 
+            # Members: union the two membership tables. Houses use
+            # entity_houses (with role); other factions use entity_factions
+            # (with rank + reputation). We surface both under a single key so
+            # the frontend doesn't have to special-case house factions.
             cur.execute(
                 """
-                SELECT e.id, e.name, ef.rank, ef.reputation
+                SELECT e.id, e.name, ef.rank AS rank, ef.reputation AS reputation,
+                       'faction' AS source
                 FROM entity_factions ef
                 JOIN entities e ON e.id = ef.entity_id
                 WHERE ef.faction_id = %s
-                ORDER BY ef.rank, e.name
+                UNION ALL
+                SELECT e.id, e.name, eh.role AS rank, NULL::smallint AS reputation,
+                       'house' AS source
+                FROM entity_houses eh
+                JOIN entities e ON e.id = eh.entity_id
+                WHERE eh.house_id = %s
+                ORDER BY rank, name
                 """,
-                (faction_id,),
+                (faction_id, faction_id),
             )
             faction["members"] = _rows_to_dicts(cur)
 
@@ -254,7 +291,112 @@ def get_faction(faction_id: int):
             school_rows = _rows_to_dicts(cur)
             faction["school"] = school_rows[0] if school_rows else None
 
+            cur.execute(
+                """
+                SELECT default_surname, spawn_min,
+                       forced_traits, forced_magic,
+                       house_trait_counts, house_trait_weights,
+                       normal_trait_weight_mults,
+                       magic_type_counts, magic_weights
+                FROM houses
+                WHERE faction_id = %s
+                """,
+                (faction_id,),
+            )
+            house_rows = _rows_to_dicts(cur)
+            faction["house"] = house_rows[0] if house_rows else None
+
     return faction
+
+
+# -------- Houses --------
+#
+# A house is `factions.kind = 'house'` plus a row in `houses` (lineage rules)
+# plus zero or more members in `entity_houses`. The `id` we expose to the
+# frontend is the underlying faction id, so /houses/{id} and
+# /factions/{id} agree on identity for the same house.
+
+@app.get("/houses")
+def list_houses():
+    sql = """
+        SELECT f.id, f.name, f.description AS notes,
+               h.type, h.default_surname, h.spawn_min,
+               (SELECT COUNT(*) FROM entity_houses eh WHERE eh.house_id = f.id)
+                   AS member_count
+        FROM factions f
+        JOIN houses h ON h.faction_id = f.id
+        ORDER BY f.name
+    """
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql)
+            return _rows_to_dicts(cur)
+
+
+@app.get("/houses/{house_id}")
+def get_house(house_id: int):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT f.id, f.name, f.description AS notes,
+                       h.type, h.default_surname, h.spawn_min,
+                       h.forced_traits, h.forced_magic,
+                       h.house_trait_counts, h.house_trait_weights,
+                       h.normal_trait_weight_mults,
+                       h.magic_type_counts, h.magic_weights
+                FROM factions f
+                JOIN houses h ON h.faction_id = f.id
+                WHERE f.id = %s
+                """,
+                (house_id,),
+            )
+            base = _rows_to_dicts(cur)
+            if not base:
+                raise HTTPException(status_code=404, detail="House not found")
+            house = base[0]
+
+            cur.execute(
+                """
+                SELECT e.id, e.name, eh.role, eh.joined_at,
+                       r.name AS race, sr.name AS subrace
+                FROM entity_houses eh
+                JOIN entities e ON e.id = eh.entity_id
+                LEFT JOIN races r ON r.id = e.race_id
+                LEFT JOIN subraces sr ON sr.id = e.subrace_id
+                WHERE eh.house_id = %s
+                ORDER BY
+                    CASE eh.role
+                        WHEN 'patriarch' THEN 0
+                        WHEN 'matriarch' THEN 0
+                        WHEN 'heir' THEN 1
+                        WHEN 'scion' THEN 2
+                        WHEN 'member' THEN 3
+                        ELSE 4
+                    END,
+                    e.name
+                """,
+                (house_id,),
+            )
+            house["members"] = _rows_to_dicts(cur)
+
+            # Other organizations the house's members belong to — handy for
+            # answering "which knight orders / guilds does this family field?"
+            cur.execute(
+                """
+                SELECT f.id, f.name, f.kind, COUNT(*) AS member_count
+                FROM entity_houses eh
+                JOIN entity_factions ef ON ef.entity_id = eh.entity_id
+                JOIN factions f ON f.id = ef.faction_id
+                WHERE eh.house_id = %s
+                GROUP BY f.id, f.name, f.kind
+                ORDER BY member_count DESC, f.name
+                """,
+                (house_id,),
+            )
+            house["affiliated_factions"] = _rows_to_dicts(cur)
+
+    return house
 
 
 # -------- Schools --------

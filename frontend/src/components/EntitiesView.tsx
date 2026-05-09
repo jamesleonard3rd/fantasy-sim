@@ -10,11 +10,16 @@ function EntitiesView({ refreshKey }: { refreshKey: number }) {
       detailEndpoint={(id) => `/entities/${id}`}
       getId={(e) => e.id}
       getTitle={(e) => e.name}
-      getSubtitle={(e) =>
-        [e.race, e.subrace].filter(Boolean).join(" · ") || e.type
-      }
+      getSubtitle={(e) => {
+        const lineage = [e.race, e.subrace].filter(Boolean).join(" · ");
+        if (e.house_name) {
+          const role = e.house_role ? ` (${e.house_role})` : "";
+          return `${e.house_name}${role}${lineage ? ` · ${lineage}` : ""}`;
+        }
+        return lineage || e.type;
+      }}
       getMeta={(e) => `#${e.id}${e.zone ? ` · ${e.zone}` : ""}`}
-      searchPlaceholder="Search entities by name, race, zone…"
+      searchPlaceholder="Search entities by name, race, house, zone…"
       emptyMessage="No entities yet. Try seeding the database."
       renderDetail={(entity) => <EntityDetailPanel entity={entity} />}
     />
@@ -39,6 +44,19 @@ function EntityDetailPanel({ entity }: { entity: EntityDetail }) {
         <Field label="Type" value={entity.type} />
         <Field label="Race" value={entity.race ?? "—"} />
         <Field label="Subrace" value={entity.subrace ?? "—"} />
+        <Field
+          label="House"
+          value={
+            entity.house ? (
+              <span>
+                {entity.house.name}{" "}
+                <span className="muted small">({entity.house.role})</span>
+              </span>
+            ) : (
+              "—"
+            )
+          }
+        />
         <Field label="Zone" value={entity.zone?.zone ?? "—"} />
         <Field
           label="Position"
@@ -50,6 +68,33 @@ function EntityDetailPanel({ entity }: { entity: EntityDetail }) {
         />
         <Field label="Created" value={formatDate(entity.created_at)} />
       </div>
+
+      {entity.houses.length > 0 && (
+        <Section title={`Houses (${entity.houses.length})`}>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>House</th>
+                <th>Role</th>
+                <th>Type</th>
+                <th>Joined</th>
+              </tr>
+            </thead>
+            <tbody>
+              {entity.houses.map((h) => (
+                <tr key={h.id}>
+                  <td>{h.name}</td>
+                  <td>
+                    <Tag tone={houseRoleTone(h.role)}>{h.role}</Tag>
+                  </td>
+                  <td>{h.type ?? "—"}</td>
+                  <td>{formatDate(h.joined_at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Section>
+      )}
 
       <Section title={`Traits (${entity.traits.length})`}>
         {entity.traits.length === 0 ? (
@@ -219,6 +264,13 @@ function EntityDetailPanel({ entity }: { entity: EntityDetail }) {
 function opinionTone(value: number): "success" | "danger" | "neutral" {
   if (value > 20) return "success";
   if (value < -20) return "danger";
+  return "neutral";
+}
+
+function houseRoleTone(role: string): "warning" | "info" | "success" | "neutral" {
+  if (role === "patriarch" || role === "matriarch") return "warning";
+  if (role === "heir") return "success";
+  if (role === "scion") return "info";
   return "neutral";
 }
 

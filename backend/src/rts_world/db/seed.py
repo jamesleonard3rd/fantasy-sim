@@ -37,6 +37,7 @@ TRAITS_FILE = GAME_DATA / "traits" / "traits.json"
 ABILITIES_FILE = GAME_DATA / "abilities" / "abilities.json"
 ITEMS_FILE = GAME_DATA / "items" / "items.json"
 SCHOOLS_DIR = GAME_DATA / "schools"
+HOUSES_FILE = GAME_DATA / "houses" / "templates.json"
 
 
 # ---------- helpers ----------
@@ -281,6 +282,89 @@ def seed_traits(conn: psycopg.Connection) -> None:
     print(f"  OK {len(traits)} traits ({mod_count} modifiers, {link_count} ability links)")
 
 
+def seed_houses(conn: psycopg.Connection) -> None:
+    """Insert noble houses.
+
+    A house is a faction (`factions.kind = 'house'`) with extra lineage
+    rules in the `houses` detail table (mirrors how schools are modelled).
+    For each house template we:
+
+      1. Upsert the `factions` row (name, description, kind='house').
+      2. Upsert the `houses` row keyed by that faction's id.
+
+    The optional ``type`` field from the template is folded into the
+    `factions.description` if no `notes` block is supplied; otherwise
+    `notes` wins (it's the authored copy).
+    """
+    print("Seeding houses...")
+    data = _load_json(HOUSES_FILE)
+    if not data:
+        return
+
+    houses = data.get("houses", [])
+    with conn.cursor() as cur:
+        for h in houses:
+            cur.execute(
+                """
+                INSERT INTO factions (name, description, kind)
+                VALUES (%s, %s, 'house')
+                ON CONFLICT (name) DO UPDATE
+                    SET description = EXCLUDED.description,
+                        kind = 'house'
+                RETURNING id
+                """,
+                (h["name"], h.get("notes")),
+            )
+            row = cur.fetchone()
+            if row is None:
+                raise RuntimeError(f"Failed to upsert faction for house {h['name']}")
+            faction_id = int(row[0])
+
+            cur.execute(
+                """
+                INSERT INTO houses (
+                    faction_id, type, default_surname, spawn_min,
+                    forced_traits, forced_magic,
+                    house_trait_counts, house_trait_weights,
+                    normal_trait_weight_mults,
+                    magic_type_counts, magic_weights
+                ) VALUES (
+                    %s, %s, %s, %s,
+                    %s, %s,
+                    %s, %s,
+                    %s,
+                    %s, %s
+                )
+                ON CONFLICT (faction_id) DO UPDATE SET
+                    type = EXCLUDED.type,
+                    default_surname = EXCLUDED.default_surname,
+                    spawn_min = EXCLUDED.spawn_min,
+                    forced_traits = EXCLUDED.forced_traits,
+                    forced_magic = EXCLUDED.forced_magic,
+                    house_trait_counts = EXCLUDED.house_trait_counts,
+                    house_trait_weights = EXCLUDED.house_trait_weights,
+                    normal_trait_weight_mults = EXCLUDED.normal_trait_weight_mults,
+                    magic_type_counts = EXCLUDED.magic_type_counts,
+                    magic_weights = EXCLUDED.magic_weights
+                """,
+                (
+                    faction_id,
+                    h.get("type"),
+                    h.get("default_surname"),
+                    h.get("spawn_min"),
+                    json.dumps(h.get("forced_traits", [])),
+                    json.dumps(h.get("forced_magic", [])),
+                    json.dumps(h.get("house_trait_counts", {})),
+                    json.dumps(h.get("house_trait_weights", {})),
+                    json.dumps(h.get("normal_trait_weight_mults", {})),
+                    json.dumps(h.get("magic_type_counts", {})),
+                    json.dumps(h.get("magic_weights", {})),
+                ),
+            )
+    conn.commit()
+    print(f"  OK {len(houses)} houses")
+
+
 def seed_schools(conn: psycopg.Connection) -> None:
     print("Seeding schools...")
     if not SCHOOLS_DIR.exists():
@@ -345,7 +429,8 @@ def seed_database(*, apply_schema: bool = True) -> None:
         if apply_schema:
             _run_sql_file(conn, SCHEMA_FILE)
 
-        # Order matters: races -> factions -> stats -> abilities -> items -> traits -> schools
+        # Order matters: races -> factions -> stats -> abilities -> items
+        # -> traits -> schools -> houses
         seed_races(conn)
         seed_factions(conn)
         seed_stats(conn)
@@ -353,6 +438,7 @@ def seed_database(*, apply_schema: bool = True) -> None:
         seed_items(conn)
         seed_traits(conn)
         seed_schools(conn)
+        seed_houses(conn)
 
         print("\nOK Database seeded successfully!")
     except Exception as e:

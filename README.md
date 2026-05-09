@@ -115,13 +115,60 @@ Configure DB credentials in a `.env` file at the repo root (see `DB_HOST`,
 
 ---
 
+## Background Simulation
+
+The `rts_world.sim` package implements the staggered region scheduler
+described in `roadmap.txt`. The contract:
+
+- The unit of work is a **region**. One tick = one wide `SELECT` (load) →
+  pure-Python systems → one bulk `UPDATE`/`INSERT` (write), all in a single
+  `BEGIN`/`COMMIT`.
+- Only `sim/regions.py`, `sim/clock.py`, and `sim/events.py` touch Postgres.
+  Everything under `sim/systems/` is pure Python over `RegionState`.
+- `regions.paused = TRUE` means Unreal owns that region; the scheduler skips
+  it until the flag clears.
+
+Common workflows (a launcher script lives at `backend/scripts/sim.py`):
+
+```bash
+# Show all regions + the world clock.
+python backend/scripts/sim.py status
+
+# Create demo regions and round-robin existing entities into them.
+python backend/scripts/sim.py seed-regions
+
+# Tick one region once (handy for debugging a single system).
+python backend/scripts/sim.py once --region-id 1
+
+# Run the scheduler loop until SIGINT. Each region ticks every
+# `tick_interval_seconds` (180s by default).
+python backend/scripts/sim.py forever
+```
+
+Adding a new behaviour is "drop a file under `sim/systems/`, register it in
+`systems/__init__.py:default_systems()`". Systems get `(state, ctx)` and
+return a list of `PendingEvent` rows; they never touch the DB directly.
+
+---
+
+## Tests
+
+Integration tests under `tests/` exercise the sim against the real local
+database. They skip cleanly if Postgres is unreachable, so they are safe to
+run anywhere.
+
+```bash
+pip install -r requirements-dev.txt
+pytest -v
+```
+
+---
+
 ## Next Steps
 
-1. Build the `rts_world.sim` package: a `regions` repository (load region working
-   set, batched write-back), a `tick.tick_region(region_id)` orchestrator, and a
-   heap-based `scheduler` that pops the next due region.
-2. Add a CLI entry point `python -m rts_world.sim.runner` (and `--once` for tests).
-3. Add the first concrete system under `sim/systems/` (e.g. opinion drift) and an
-   end-to-end test that ticks one region against a temporary database.
-4. Backfill `entity_zones.region_id` from the legacy `zone` text and start
+1. First real system: opinion drift in `sim/systems/relationships.py`
+   (roadmap §9.1). Validates the bulk UPDATE path and event emission.
+2. Backfill `entity_zones.region_id` from the legacy `zone` text and start
    populating it on entity creation.
+3. Once Unreal exists, document the paused-flag handoff and the
+   `world_events` consumer contract in a separate doc.
