@@ -1,0 +1,19 @@
+{
+  "items": [
+    {
+      "name": "Iron Sword",
+      "description": "Reliable steel blade.",
+      "category": "weapon"
+    },
+    {
+      "name": "Traveler's Cloak",
+      "description": "Keeps you warm and hidden.",
+      "category": "armor"
+    },
+    {
+      "name": "Healing Potion",
+      "description": "Restores minor wounds.",
+      "category": "consumable"
+    }
+  ]
+}

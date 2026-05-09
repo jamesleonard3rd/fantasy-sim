@@ -1,0 +1,369 @@
+================================================================================
+FANTASY-SIM — WORLD SIMULATION ROADMAP
+================================================================================
+
+This file captures the design intent for the background world simulation, the
+performance reasoning behind it, and the concrete steps to build it. It is
+written so that a fresh contributor (or AI context) can pick up the work
+without re-deriving the architecture.
+
+--------------------------------------------------------------------------------
+1. PROJECT SHAPE
+--------------------------------------------------------------------------------
+
+Goal: a persistent fantasy world inhabited by hundreds-to-thousands of NPCs
+that continue to live, interact, and change while the player is elsewhere.
+
+Two execution environments share authority over the world state:
+
+  * Background sim (this Python codebase):
+      - Owns every region the player is NOT currently in.
+      - Ticks each region on a slow cadence (default ~3 min).
+      - Persists all state to PostgreSQL.
+
+  * Live region (separate Unreal C++/Blueprint project):
+      - Owns the single region the player is currently inside.
+      - Runs full real-time simulation (frame-rate AI, combat, pathing).
+      - Reads region state from Postgres on entry; writes back on exit and
+        on meaningful events.
+      - While Unreal owns a region, Postgres marks `regions.paused = TRUE`
+        so the background sim skips it.
+
+Schema: ECS-style. `entities` is the spine; everything else (traits,
+factions, items, relationships, positions, zones, abilities, schools) is a
+component table keyed by entity_id. See `backend/src/rts_world/db/schema.sql`.
+
+--------------------------------------------------------------------------------
+2. SCALE TARGETS
+--------------------------------------------------------------------------------
+
+  * Background world: 2,000–5,000 entities total, partitioned into 20–30
+    regions. Average ~100–250 entities per region. Hard cap on region size
+    is ~300 entities to keep per-tick cost predictable (see §4).
+  * Live region (Unreal): typically 50–100 entities, peak 150–200.
+  * Region tick interval: 180 s (configurable per region via
+    `regions.tick_interval_seconds`).
+  * Per-entity logic is "heavy": each NPC scores multiple goals, considers
+    interactions with other entities in its region, and applies probabilistic
+    outcomes.
+
+--------------------------------------------------------------------------------
+3. PERFORMANCE ANALYSIS — WHY PYTHON IS THE RIGHT CHOICE FOR THE BACKGROUND
+--------------------------------------------------------------------------------
+
+Worry: "Will Python be too slow?"
+Short answer: no, by 10–50x margin, IF the architecture below is followed.
+
+Per-entity Python cost (CPython, dict-based state, utility-AI style scoring,
+~50-neighbor interaction sweep): ~0.1–0.5 ms.
+Per-region cost (250 entities, heavy sim): ~50–200 ms of CPU plus
+~150–300 ms of DB I/O = ~200–500 ms wall clock per region tick.
+
+Scheduling: staggered, not bursty.
+  * 30 regions / 180 s budget = one region tick every ~6 seconds.
+  * Per tick budget: 6 s wall clock. Real cost: ~0.5 s. ~8% duty cycle.
+  * This means at any random instant the background sim is most likely
+    idle, which is what makes co-locating with Unreal painless.
+
+Where Python WOULD start to hurt (none of which apply at the target scale):
+  * Region size > 500–1000 (the O(N^2) interaction term explodes).
+  * Tick interval < 10 s combined with heavy logic.
+  * Total entities > ~50,000.
+  * Sub-millisecond real-time loops (that's Unreal's job, not Python's).
+
+Escape hatches if any of the above happens later, in increasing cost:
+  1. numpy / polars for any vectorizable scoring or spatial math.
+  2. Spatial bucketing within regions to cap neighbor checks.
+  3. Numba on the hot inner loop.
+  4. Move only the inner interaction loop to Rust via PyO3.
+  5. Last resort: rewrite the sim layer in another language. We don't
+     expect to ever need this.
+
+--------------------------------------------------------------------------------
+4. CO-LOCATING WITH UNREAL — STUTTER-FREE COEXISTENCE
+--------------------------------------------------------------------------------
+
+Both processes live on the player's machine. With sane defaults this is
+invisible from Unreal's frame budget, but four specific footguns must be
+avoided:
+
+  (a) Postgres fsync vs Unreal asset streaming on the same disk.
+      Mitigations: require SSD; set `synchronous_commit = off` in
+      postgresql.conf; one COMMIT per region tick, not per entity.
+
+  (b) Lock contention from long Python writes blocking Unreal queries.
+      Mitigations: keep transactions short; one BEGIN/COMMIT per region
+      tick; row-level MVCC handles the rest; never take table locks.
+
+  (c) UNREAL POLLING POSTGRES ON THE GAME THREAD. This is the #1 cause of
+      stutters in this kind of architecture and the single most important
+      rule.
+      Mitigations:
+        - Unreal hydrates the live region from Postgres ONCE on entry and
+          ONCE on exit. Never per-frame.
+        - Any write-back to Postgres goes through an Unreal worker thread,
+          never the game thread.
+        - For "what happened while I was away" use the world_events log
+          (see §5), read once at region entry.
+
+  (d) Python sim hogging a CPU core Unreal wants.
+      Mitigations: run the Python process at BelowNormal priority. Modern
+      schedulers handle the rest — Unreal's threads will always be
+      preferred.
+
+Recommended Postgres tuning for the player's local machine (single-user):
+
+    shared_buffers          = 256MB
+    effective_cache_size    = 1GB
+    synchronous_commit      = off
+    wal_compression         = on
+    max_connections         = 20
+
+--------------------------------------------------------------------------------
+5. ARCHITECTURAL SOLUTION
+--------------------------------------------------------------------------------
+
+5.1 Region-as-unit-of-work
+    The unit of scheduling, transaction, and reasoning is the REGION.
+    One region tick = one wide SELECT (load), pure-Python simulate(), one
+    bulk UPDATE / event INSERT (write). No N+1 queries, no per-entity
+    transactions.
+
+5.2 Staggered scheduler
+    A single asyncio (or thread-based) loop with a heap of
+    (next_due_at, region_id). Pop the soonest-due region, sleep until
+    due, run its tick, push it back with `now + tick_interval_seconds`.
+    Skip regions where `paused = TRUE`.
+
+5.3 Data-oriented systems, not OO entities
+    Do NOT instantiate 250 Entity objects per tick. Keep entity rows as
+    dicts (or numpy columns later, if needed). Process by system, not by
+    entity:
+
+        for region in due_regions:
+            state = load_region_state(region)
+            for system in [needs, goals, relationships, faction_politics]:
+                events.extend(system.apply(state, rng))
+            write_region_state(state, events)
+
+    Each system is a small file under `sim/systems/`. Adding a behavior
+    is "add a file + register it in tick.py". Pure functions over
+    region state make them trivially unit-testable.
+
+5.4 Event log, not just state overwrites
+    The background sim should APPEND to `world_events` for anything a
+    player might want to see ("Skirmish at the river", "House Vaelori
+    enrolled a new student", "Captain Kael's opinion of the Mage Tower
+    fell to -42"). When the player enters a region, Unreal pulls events
+    since `last_seen_at` and replays/summarizes them. This is what makes
+    a slow background tick feel like a living world.
+
+5.5 Authority handoff
+    Region state in Postgres has exactly one writer at a time:
+      * If `regions.paused = TRUE`, Unreal is the writer.
+      * If `regions.paused = FALSE`, the background sim is the writer.
+    On player region change:
+      * On entry: Unreal sets `paused = TRUE`, hydrates live state, takes
+        over.
+      * On exit: Unreal flushes final state + events back to Postgres,
+        sets `paused = FALSE`. Scheduler resumes ticking the region on
+        its normal cadence (its `last_tick_at` is set so it doesn't
+        immediately fire).
+
+5.6 World clock
+    Single-row `world_clock` table holds shared in-game time. The
+    scheduler bumps it. All systems read game-time from there rather
+    than `datetime.now()` so they can be tested deterministically.
+
+--------------------------------------------------------------------------------
+6. DATABASE — CURRENT STATE
+--------------------------------------------------------------------------------
+
+Schema lives in `backend/src/rts_world/db/schema.sql`. Already in place:
+
+  Lookup / static:
+    races, subraces, traits, stats, trait_stat_modifiers, factions,
+    items, abilities, trait_abilities, schools
+
+  Entity components:
+    entities, entity_traits, entity_factions, entity_items,
+    entity_abilities, entity_schools, entity_zones, entity_positions,
+    relationships
+
+  Simulation infrastructure (added during cleanup pass):
+    regions          -- id, name, kind, tick_interval_seconds,
+                        last_tick_at, paused
+    world_events     -- id, region_id, kind, subject_entity_id,
+                        target_entity_id, payload JSONB, occurred_at
+    world_clock      -- single-row global game time
+    entity_zones.region_id  -- nullable FK alongside legacy zone TEXT
+
+  Indexes added:
+    idx_entity_zones_region, idx_world_events_region_time,
+    idx_regions_due (partial: WHERE paused = FALSE)
+
+Seeding pipeline (`backend/src/rts_world/db/seed.py`):
+    Reads JSON from `game_data/{races,factions,stats,traits,abilities,
+    items,schools}/...` and inserts idempotently. Run via
+    `python backend/scripts/init_db.py`. The old SQL-based
+    `seed_data.sql` was deleted; do not reintroduce it.
+
+--------------------------------------------------------------------------------
+7. PROPOSED MODULE LAYOUT
+--------------------------------------------------------------------------------
+
+    backend/src/rts_world/
+        api/                # existing FastAPI read-only views
+        db/                 # existing schema + seed pipeline
+        sim/                # NEW
+            __init__.py
+            regions.py      # repository: load/write region working set,
+                            #   query due regions, set paused
+            tick.py         # tick_region(region_id) orchestrator;
+                            #   pure-Python simulate() called between
+                            #   load and write
+            scheduler.py    # heap-based "next region due" loop
+            runner.py       # long-lived process / CLI entry
+            events.py       # helpers for appending world_events
+            clock.py        # read/advance world_clock
+            systems/
+                __init__.py
+                needs.py        # hunger, fatigue, etc. drift
+                goals.py        # goal scoring + selection
+                relationships.py# opinion drift, gossip
+                factions.py     # faction politics ticks
+                # ... add a file per concern
+
+Design rules:
+  * Only `regions.py`, `events.py`, `clock.py` touch Postgres.
+  * `tick.py` and everything under `systems/` are pure Python over
+    in-memory state. Trivially unit-testable.
+  * `runner.py` is just the loop wiring. No game logic lives here.
+
+--------------------------------------------------------------------------------
+8. MINIMUM VIABLE FIRST SLICE (MVP)
+--------------------------------------------------------------------------------
+
+Resist building the whole sim before running it end to end. The smallest
+useful proof:
+
+  1. Add `RegionState` dataclass: entities (list of dicts), relationships
+     (list of dicts), region_row.
+  2. Implement `regions.load_region_state(region_id) -> RegionState`
+     using one wide SELECT per relevant table, filtered by region_id.
+  3. Implement `regions.write_region_state(state, events)` doing one
+     `executemany` per changed table + `executemany` insert into
+     `world_events`. Wrap in a single BEGIN/COMMIT.
+  4. Implement `tick.tick_region(region_id)`:
+        load -> simulate (no-op stub returning one "tick happened" event)
+        -> write -> update regions.last_tick_at and world_clock.
+  5. Implement `scheduler.run_forever()` with a heap of due regions.
+     Skip `paused`. Sleep until next due.
+  6. Add CLI entry: `python -m rts_world.sim.runner` with subcommands:
+        once     -- run one tick of one region (for tests / debugging)
+        forever  -- the real loop
+  7. Add a small seeding helper: create a few `regions` rows and assign
+     existing entities to them via `entity_zones.region_id`.
+  8. Add a pytest that spins up against the real DB (or a temp one):
+        - seeds one region with a few entities
+        - calls tick_region(...)
+        - asserts a row appears in world_events
+        - asserts regions.last_tick_at advanced
+
+After this MVP, every new behavior is just a file under `sim/systems/`
+hooked into `tick.py`. The architecture never has to change.
+
+--------------------------------------------------------------------------------
+9. SYSTEMS TO BUILD AFTER THE MVP (suggested order)
+--------------------------------------------------------------------------------
+
+In rough difficulty / dependency order:
+
+  1. Opinion drift in relationships (decay toward 0 over time).
+     Validates: bulk UPDATE pattern, event emission.
+
+  2. Needs (hunger, fatigue, mood) tied to traits.
+     Validates: per-entity state mutation, system composition.
+
+  3. Goals: each entity has 1–N active goals; tick scores them and picks
+     a primary; primary goal modifies needs/relationships.
+     Validates: multi-goal utility AI, the "heavy" per-entity work.
+
+  4. Pairwise interactions: simple in-region neighbor sweep with bounded
+     candidate count (cap N at ~30 per entity for safety, even in a
+     250-entity region).
+     Validates: O(N^2) cost stays bounded; spatial bucketing if needed.
+
+  5. Faction politics: faction-vs-faction reputation ticks, opinion
+     spillover from members.
+     Validates: cross-system data flow.
+
+  6. School enrollment / graduation lifecycle keyed off `world_clock`.
+     Validates: time-based event scheduling.
+
+  7. Birth / death / aging.
+     Validates: entity lifecycle and FK cascade behavior.
+
+After (6) and (7) the world is genuinely "alive" between player visits.
+
+--------------------------------------------------------------------------------
+10. RISKS / WATCHPOINTS
+--------------------------------------------------------------------------------
+
+  * O(N^2) explosion. If a region grows beyond ~300 entities, neighbor
+    sweeps dominate. Two responses: cap region size at the design layer
+    (split crowded regions), or add spatial bucketing in §9.4.
+
+  * N+1 queries. The single most likely way to make the sim slow. All
+    region loads must be wide SELECTs filtered by region_id. Code review
+    rule: no SELECT inside a per-entity loop, ever.
+
+  * Long transactions. One BEGIN/COMMIT per region tick. Never wrap the
+    whole scheduler pass in a transaction.
+
+  * Schema drift between sim writes and API reads. The FastAPI layer in
+    `api/main.py` already reads many of these tables. Any schema change
+    must keep its reads working OR update them in the same commit.
+
+  * Two writers. NEVER let both Unreal and the background sim write to
+    the same region simultaneously. The `paused` flag is the contract;
+    any code that writes to entity tables must check it.
+
+  * Unreal calling Postgres on the game thread. See §4(c). Worth a
+    comment in the Unreal codebase too.
+
+--------------------------------------------------------------------------------
+11. WHAT'S BEEN DONE (cleanup pass, May 2026)
+--------------------------------------------------------------------------------
+
+  * .gitignore expanded; venv/ (12k files), all __pycache__ (4.7k),
+    and .DS_Store untracked.
+  * Dead `seed_data.sql` deleted; JSON pipeline is the only seed path.
+  * Empty `tests/learning.py` removed.
+  * `backend/main.py` rewritten as a real `ping` CLI matching the
+    Makefile and README.
+  * Demo entity-generation moved to `backend/scripts/demo_generate.py`.
+  * `Makefile` cwd assumption fixed; `install` and `demo` targets added.
+  * `requirements.txt` and `requirements-dev.txt` added (were missing).
+  * README updated to reflect actual setup, schema, and next steps.
+  * Schema additions: regions, world_events, world_clock, plus
+    entity_zones.region_id and supporting indexes.
+  * Verified: schema applies cleanly, full seed loads, ping works.
+
+--------------------------------------------------------------------------------
+12. IMMEDIATE NEXT STEPS
+--------------------------------------------------------------------------------
+
+  [ ] Create `backend/src/rts_world/sim/` package with the layout in §7.
+  [ ] Implement the MVP slice in §8 (load -> no-op simulate -> write +
+      scheduler + CLI runner + first integration test).
+  [ ] Seed 2–3 regions and assign existing entities to them via
+      `entity_zones.region_id`.
+  [ ] First real system: opinion drift (§9.1).
+  [ ] Document the Unreal-side contract (paused flag, world_events
+      consumer, hydrate-on-entry / flush-on-exit) in a separate doc
+      once the Unreal project takes shape.
+
+--------------------------------------------------------------------------------
+END
+--------------------------------------------------------------------------------

@@ -1,0 +1,9 @@
+{
+  "stats": [
+    { "name": "Strength", "description": "Raw physical power and carrying capacity." },
+    { "name": "Fortitude", "description": "Toughness and resistance to harm." },
+    { "name": "Agility", "description": "Speed, reflexes, and balance." },
+    { "name": "Intelligence", "description": "Reasoning, memory, and learning rate." },
+    { "name": "Charisma", "description": "Force of personality and social presence." }
+  ]
+}

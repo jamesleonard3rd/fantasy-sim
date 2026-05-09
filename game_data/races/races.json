@@ -1,0 +1,27 @@
+{
+  "races": [
+    {
+      "name": "Human",
+      "subraces": [
+        { "name": "Varenic", "description": "River-valley people with a long history of trade and agriculture. Warm-toned skin, dark hair, strong family clans." },
+        { "name": "Caldari", "description": "Lean builds, scarfed faces, nomadic ancestry." },
+        { "name": "Rhovani", "description": "Steppe-riding horsefolk with nomadic traditions." }
+      ]
+    },
+    {
+      "name": "High Elf",
+      "subraces": [
+        { "name": "Aurelian", "description": "High elves of the radiant cities." },
+        { "name": "Vaelori", "description": "Wood elves of the deep forests." },
+        { "name": "Vel'Karim", "description": "Dark elves of the underdeep." }
+      ]
+    },
+    { "name": "Dwarf", "subraces": [] },
+    {
+      "name": "Asteri",
+      "description": "Star-touched humans born under rare celestial events.",
+      "subraces": []
+    },
+    { "name": "Greenskin", "subraces": [] }
+  ]
+}

@@ -60,12 +60,27 @@ CREATE TABLE IF NOT EXISTS entity_factions (
     PRIMARY KEY (entity_id, faction_id)
 );
 
--- Zone: always loaded for world simulation
+-- Regions: top-level partition the world simulation iterates over.
+-- Each region ticks independently on `tick_interval_seconds` cadence.
+-- `paused` is set to true while Unreal is the live authority on this region.
+CREATE TABLE IF NOT EXISTS regions (
+    id SERIAL PRIMARY KEY,
+    name TEXT UNIQUE NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'wilderness',
+    tick_interval_seconds INT NOT NULL DEFAULT 180 CHECK (tick_interval_seconds > 0),
+    last_tick_at TIMESTAMP WITH TIME ZONE,
+    paused BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+-- Zone: always loaded for world simulation. `zone` is a free-text label kept
+-- for backwards compatibility; new code should populate `region_id`.
 CREATE TABLE IF NOT EXISTS entity_zones (
     entity_id INT PRIMARY KEY REFERENCES entities(id) ON DELETE CASCADE,
     zone TEXT NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
 );
+ALTER TABLE entity_zones
+    ADD COLUMN IF NOT EXISTS region_id INT REFERENCES regions(id) ON DELETE SET NULL;
 
 -- Position: only loaded when player views that zone
 CREATE TABLE IF NOT EXISTS entity_positions (
@@ -147,8 +162,37 @@ CREATE TABLE IF NOT EXISTS relationships (
     CHECK (subject_entity_id <> target_entity_id)
 );
 
+-- World events: append-only log of things the background sim did.
+-- Unreal pulls events for a region since the player's last_seen timestamp on
+-- region entry to summarize / replay what happened while away.
+CREATE TABLE IF NOT EXISTS world_events (
+    id BIGSERIAL PRIMARY KEY,
+    region_id INT REFERENCES regions(id) ON DELETE SET NULL,
+    kind TEXT NOT NULL,
+    subject_entity_id INT REFERENCES entities(id) ON DELETE SET NULL,
+    target_entity_id INT REFERENCES entities(id) ON DELETE SET NULL,
+    payload JSONB,
+    occurred_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+-- World clock: single-row table holding global game time. Advanced by the
+-- scheduler each tick so all systems agree on "now" without consulting the
+-- wall clock independently.
+CREATE TABLE IF NOT EXISTS world_clock (
+    id INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    game_day INT NOT NULL DEFAULT 0,
+    game_tick BIGINT NOT NULL DEFAULT 0,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+INSERT INTO world_clock (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+
 CREATE INDEX IF NOT EXISTS idx_entity_zones_zone ON entity_zones(zone);
+CREATE INDEX IF NOT EXISTS idx_entity_zones_region ON entity_zones(region_id);
 CREATE INDEX IF NOT EXISTS idx_entity_factions_faction ON entity_factions(faction_id);
 CREATE INDEX IF NOT EXISTS idx_entity_traits_trait ON entity_traits(trait_id);
 CREATE INDEX IF NOT EXISTS idx_relationships_subject ON relationships(subject_entity_id);
 CREATE INDEX IF NOT EXISTS idx_relationships_target ON relationships(target_entity_id);
+CREATE INDEX IF NOT EXISTS idx_world_events_region_time
+    ON world_events(region_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_regions_due
+    ON regions(last_tick_at NULLS FIRST) WHERE paused = FALSE;

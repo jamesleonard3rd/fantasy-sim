@@ -1,12 +1,125 @@
 :root {
-  font-family: Arial, sans-serif;
-  line-height: 1.4;
+  /* Backgrounds */
+  --bg-app: #070b18;
+  --bg-app-2: #0c1126;
+  --bg-panel: rgba(20, 25, 50, 0.72);
+  --bg-panel-solid: #141932;
+  --bg-panel-2: rgba(28, 34, 66, 0.7);
+  --bg-elevated: rgba(40, 47, 86, 0.8);
+  --bg-input: rgba(8, 12, 28, 0.85);
+
+  /* Borders / strokes */
+  --border: rgba(99, 109, 168, 0.18);
+  --border-strong: rgba(168, 85, 247, 0.35);
+  --border-glow: rgba(168, 85, 247, 0.55);
+
+  /* Text */
+  --text: #ecebff;
+  --text-muted: #8b91b8;
+  --text-dim: #5a6191;
+
+  /* Accents */
+  --violet: #a855f7;
+  --violet-2: #7c3aed;
+  --magenta: #ec4899;
+  --gold: #fbbf24;
+  --cyan: #22d3ee;
+  --emerald: #34d399;
+  --rose: #fb7185;
+  --amber: #f59e0b;
+
+  --accent: var(--violet);
+  --accent-strong: var(--violet-2);
+  --info: var(--cyan);
+  --success: var(--emerald);
+  --warning: var(--gold);
+  --danger: var(--rose);
+
+  --font-display: "Cinzel", "Trajan Pro", "Cormorant Garamond", Georgia, serif;
+  --font-body: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--text);
+  background: var(--bg-app);
+
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
 }
 
 body {
-  margin: 0;
-  padding: 0;
+  background:
+    radial-gradient(
+      circle at 18% -10%,
+      rgba(124, 58, 237, 0.22),
+      transparent 55%
+    ),
+    radial-gradient(
+      circle at 95% 0%,
+      rgba(236, 72, 153, 0.18),
+      transparent 50%
+    ),
+    radial-gradient(
+      circle at 50% 110%,
+      rgba(34, 211, 238, 0.14),
+      transparent 60%
+    ),
+    var(--bg-app);
+  color: var(--text);
   min-height: 100vh;
-  background: #ffffff;
-  color: #000000;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+a {
+  color: var(--violet);
+  text-decoration: none;
+}
+
+::selection {
+  background: rgba(168, 85, 247, 0.35);
+  color: white;
+}
+
+/* Scrollbar polish (WebKit) */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(99, 109, 168, 0.25);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(168, 85, 247, 0.4);
 }

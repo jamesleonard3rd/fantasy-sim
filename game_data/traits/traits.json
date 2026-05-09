@@ -1,6 +1,18 @@
 {
   "traits": [
     {
+      "name": "Brave",
+      "description": "{name} is willing to take risks in combat.",
+      "modifiers": [],
+      "abilities": []
+    },
+    {
+      "name": "Fast Learner",
+      "description": "{name} gains skills more rapidly.",
+      "modifiers": [],
+      "abilities": []
+    },
+    {
       "name": "Strong",
       "description": "{name} hits harder than normal.",
       "modifiers": [

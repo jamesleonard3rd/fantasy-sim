@@ -1,0 +1,20 @@
+{
+  "abilities": [
+    {
+      "name": "Power Strike",
+      "description": "Heavy melee attack.",
+      "type": "active",
+      "cooldown_seconds": 8,
+      "cost": 10,
+      "damage": 25
+    },
+    {
+      "name": "Arcane Insight",
+      "description": "Passive spell focus boost.",
+      "type": "passive",
+      "cooldown_seconds": 0,
+      "cost": 0,
+      "damage": 0
+    }
+  ]
+}

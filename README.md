@@ -46,12 +46,22 @@ The database uses an ECS-style design.
 
 ### Component Tables
 
-- **positions** – x/y/z + zone for entity placement
+- **entity_positions** – x/y/z for entity placement (loaded only when player views a region)
+- **entity_zones** – which region/zone an entity belongs to (always loaded)
 - **entity_factions** – many-to-many entity → faction with reputation
-- (optional) **entity_traits** – many-to-many entity → traits
-- (planned) **abilities** – active/passive abilities with cooldown, cost, damage
-- (planned) **schools** – humanoid entities attending institutions
-- (planned) **relationships** – opinion score from -100 to 100
+- **entity_traits** – many-to-many entity → traits
+- **entity_items** – inventory quantities
+- **entity_abilities** – per-entity ability levels and cooldowns
+- **entity_schools** – student / graduate / instructor enrollment
+- **relationships** – opinion score from -100 to 100
+
+### Simulation Tables
+
+- **regions** – top-level partitions the background sim ticks; each has its own
+  `tick_interval_seconds` and `paused` flag (set true while Unreal owns the region)
+- **world_events** – append-only log of actions the background sim took; the
+  Unreal client reads new rows on region entry to summarize what happened
+- **world_clock** – single-row table holding shared game time
 
 This structure makes it easy to attach any component (traits, factions, etc.) to any entity.
 
@@ -79,26 +89,39 @@ The backend is designed to support:
 ### 1. Install Dependencies
 
 ```bash
-python3 -m venv venv
+python -m venv venv
+# Windows
+venv\Scripts\activate
+# macOS / Linux
 source venv/bin/activate
-pip install psycopg python-dotenv
+
+pip install -r requirements.txt
+# or, with dev tooling (mypy, pytest):
+pip install -r requirements-dev.txt
 ```
+
+Configure DB credentials in a `.env` file at the repo root (see `DB_HOST`,
+`DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, or a single `DATABASE_URL`).
 
 ---
 
-## Usage (backend now lives in `backend/`)
+## Usage (backend lives in `backend/`)
 
 - Initialize database (schema + seeds): `python backend/scripts/init_db.py`
 - Schema only: `python backend/scripts/init_db.py --skip-seed`
-- Connectivity check/sample run: `python backend/main.py`
-- Integration smoke test (requires running Postgres): `python -m unittest tests/test_db_smoke.py`
+- Connectivity ping: `python backend/main.py ping`
+- Print sample generated entities: `python backend/scripts/demo_generate.py`
+- Run the API: `uvicorn rts_world.api.main:app --reload --app-dir backend/src`
 
 ---
 
 ## Next Steps
 
-1. Expand `backend/src/rts_world/db/schema.sql` with planned components (traits/entity_traits, relationships with opinion score, abilities, schools, items) and fix the `positions` semicolon; align `backend/src/rts_world/db/seed_data.sql` to match.
-2. Add constraints and indexes: `UNIQUE` on lookup names, cascades on join tables, check constraints (opinion range, rank enums), and spatial indexes for common position queries.
-3. Create a helper (e.g., `backend/scripts/init_db.py`) to load schema + seed data using `psycopg` and `.env` connection settings; wire `backend/main.py` to use it.
-4. Add a minimal migration/check pipeline (e.g., `make` or `tox`) to run schema load, seeds, and integrity checks automatically.
-5. Write a small integration test that inserts a sample entity with traits/factions/position and verifies the relationships round-trip.
+1. Build the `rts_world.sim` package: a `regions` repository (load region working
+   set, batched write-back), a `tick.tick_region(region_id)` orchestrator, and a
+   heap-based `scheduler` that pops the next due region.
+2. Add a CLI entry point `python -m rts_world.sim.runner` (and `--once` for tests).
+3. Add the first concrete system under `sim/systems/` (e.g. opinion drift) and an
+   end-to-end test that ticks one region against a temporary database.
+4. Backfill `entity_zones.region_id` from the legacy `zone` text and start
+   populating it on entity creation.
