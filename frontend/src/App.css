@@ -172,10 +172,11 @@
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  padding: 6px 14px;
+  padding: 6px 14px 7px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: rgba(20, 25, 50, 0.6);
+  min-width: 96px;
 }
 
 .day-chip-label {
@@ -191,6 +192,13 @@
   font-weight: 600;
   color: white;
   letter-spacing: 1.5px;
+}
+
+.day-chip-time {
+  font-family: var(--font-display);
+  color: var(--cyan);
+  font-size: 12px;
+  letter-spacing: 1.4px;
 }
 
 .advance-btn {
@@ -214,6 +222,17 @@
 .advance-btn:hover {
   transform: translateY(-1px);
   filter: brightness(1.08);
+}
+
+.advance-btn:disabled {
+  cursor: wait;
+  opacity: 0.65;
+  transform: none;
+}
+
+.sim-toggle-btn {
+  min-width: 108px;
+  justify-content: center;
 }
 
 .advance-arrow {
@@ -1056,10 +1075,180 @@
   padding: 12px 14px;
 }
 
+.settings-page {
+  max-width: 880px;
+}
+
+.settings-panel {
+  padding: 22px 26px;
+}
+
+.settings-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 14px;
+}
+
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 130px;
+}
+
+.settings-field span {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: var(--text-dim);
+}
+
+.settings-field input {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 9px 10px;
+  font-size: 14px;
+  outline: none;
+}
+
+.settings-field input:focus {
+  border-color: var(--violet);
+  box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.18);
+}
+
+.settings-save {
+  min-width: 120px;
+  justify-content: center;
+}
+
+.settings-hint {
+  margin-top: 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.settings-success {
+  margin-top: 10px;
+  color: #86efac;
+  font-size: 12px;
+}
+
 .chip-row {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.editable-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  position: relative;
+}
+
+.editable-chip button,
+.table-actions button,
+.add-control button,
+.inline-edit-row button {
+  border: 1px solid var(--border);
+  background: rgba(20, 25, 50, 0.8);
+  color: var(--text);
+  border-radius: 999px;
+  min-width: 24px;
+  min-height: 24px;
+  font-size: 12px;
+}
+
+.editable-chip button,
+.table-actions button {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.editable-chip button {
+  position: absolute;
+  top: -9px;
+  right: -9px;
+  z-index: 1;
+}
+
+.editable-chip:hover button,
+.editable-chip:focus-within button,
+.data-table tbody tr:hover .table-actions button,
+.data-table tbody tr:focus-within .table-actions button {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.editable-chip button:hover,
+.table-actions button:hover,
+.add-control button:hover,
+.inline-edit-row button:hover {
+  border-color: var(--violet);
+  color: white;
+}
+
+.add-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.add-control select,
+.add-control input,
+.inline-edit-row select {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 12px;
+  outline: none;
+}
+
+.add-control select {
+  max-width: 210px;
+}
+
+.add-control-qty {
+  width: 64px;
+}
+
+.inline-edit-value {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  text-decoration: underline dotted rgba(168, 85, 247, 0.65);
+  text-underline-offset: 3px;
+}
+
+.inline-edit-row {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.table-actions {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  width: auto;
+  padding: 0 !important;
+  border-bottom: none !important;
+  transform: translateY(-50%);
+  white-space: nowrap;
+  z-index: 1;
+}
+
+.table-actions-heading {
+  display: none;
 }
 
 .plain-list {
@@ -1095,6 +1284,10 @@
 
 .data-table tbody tr:hover {
   background: rgba(168, 85, 247, 0.05);
+}
+
+.data-table tbody tr {
+  position: relative;
 }
 
 /* ---------- JSON block ---------- */

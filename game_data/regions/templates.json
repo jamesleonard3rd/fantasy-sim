@@ -1,0 +1,19 @@
+{
+  "regions": [
+    {
+      "name": "Whisperwood Marches",
+      "type": "region",
+      "tick_interval_seconds": 180,
+      "paused": false,
+      "notes": "Border forest where the realm thins; first template region from game data."
+    },
+    {
+      "name": "Valemont Keep",
+      "type": "castle",
+      "parent": "Whisperwood Marches",
+      "tick_interval_seconds": 180,
+      "paused": false,
+      "notes": "Seat of House Valemont within the Whisperwood Marches."
+    }
+  ]
+}

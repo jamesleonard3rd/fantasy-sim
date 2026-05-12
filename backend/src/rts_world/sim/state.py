@@ -30,6 +30,11 @@ class PendingEvent:
     subject_entity_id: int | None = None
     target_entity_id: int | None = None
     payload: dict[str, Any] | None = None
+    significance: int = 1
+
+    def __post_init__(self) -> None:
+        if not 1 <= int(self.significance) <= 5:
+            raise ValueError("event significance must be between 1 and 5")
 
 
 # ---------- working set for one region tick ----------
@@ -49,6 +54,7 @@ class RegionState:
     region: dict[str, Any]
     entities: list[dict[str, Any]] = field(default_factory=list)
     relationships: list[dict[str, Any]] = field(default_factory=list)
+    relationship_terms: list[dict[str, Any]] = field(default_factory=list)
 
     # Indices that systems can rely on; rebuilt by load_region_state.
     entities_by_id: dict[int, dict[str, Any]] = field(default_factory=dict)
@@ -57,6 +63,7 @@ class RegionState:
     # the corresponding rows so the write path knows what to flush.
     dirty_entity_ids: set[int] = field(default_factory=set)
     dirty_relationship_keys: set[tuple[int, int]] = field(default_factory=set)
+    dirty_relationship_term_ids: set[int] = field(default_factory=set)
 
     @property
     def region_id(self) -> int:
@@ -67,6 +74,9 @@ class RegionState:
 
     def mark_relationship_dirty(self, subject_id: int, target_id: int) -> None:
         self.dirty_relationship_keys.add((int(subject_id), int(target_id)))
+
+    def mark_relationship_term_dirty(self, term_id: int) -> None:
+        self.dirty_relationship_term_ids.add(int(term_id))
 
 
 # ---------- per-tick context shared by all systems ----------
@@ -86,3 +96,8 @@ class TickContext:
     game_day: int
     game_tick: int
     rng: random.Random
+
+    @property
+    def absolute_game_tick(self) -> int:
+        """Monotonic game minute used for cross-day timers."""
+        return self.game_day * 1440 + self.game_tick

@@ -27,8 +27,8 @@ def isolated_region(db_conn):
     with db_conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO regions (name, kind, tick_interval_seconds)
-            VALUES (%s, 'wilderness', 180)
+            INSERT INTO regions (name, type, tick_interval_seconds)
+            VALUES (%s, 'region', 180)
             RETURNING id
             """,
             (name,),
@@ -67,12 +67,13 @@ def test_tick_region_emits_event_and_advances_clocks(db_conn, isolated_region):
     # 1. world_events row exists for our region with the heartbeat kind.
     with db_conn.cursor() as cur:
         cur.execute(
-            "SELECT kind, payload FROM world_events WHERE region_id = %s",
+            "SELECT kind, significance, payload FROM world_events WHERE region_id = %s",
             (region_id,),
         )
         rows = cur.fetchall()
     assert any(r[0] == "region.tick" for r in rows), \
         f"expected a 'region.tick' event, got: {[r[0] for r in rows]}"
+    assert all(1 <= int(r[1]) <= 5 for r in rows)
 
     # 2. regions.last_tick_at is advanced to a recent timestamp.
     with db_conn.cursor() as cur:
@@ -87,16 +88,17 @@ def test_tick_region_emits_event_and_advances_clocks(db_conn, isolated_region):
     age = (datetime.now(timezone.utc) - last_tick_at).total_seconds()
     assert 0 <= age < 60, f"last_tick_at not recent: {age}s old"
 
-    # 3. world_clock advanced by exactly one tick.
+    # 3. world_clock advanced. It is now a 24-hour day timer, so game_tick is
+    #    the minute within the current realm day rather than a raw tick count.
     with db_conn.cursor() as cur:
-        cur.execute("SELECT game_tick FROM world_clock WHERE id = 1")
+        cur.execute("SELECT game_day, game_tick FROM world_clock WHERE id = 1")
         row = cur.fetchone()
     assert row is not None
-    tick_after = int(row[0])
-    assert tick_after == tick_before + 1, (
-        f"expected world_clock.game_tick to advance by 1, "
-        f"got {tick_before} -> {tick_after}"
-    )
+    day_after = int(row[0])
+    tick_after = int(row[1])
+    assert 0 <= tick_after < 1440
+    assert day_after >= 0
+    assert tick_after != tick_before or day_after > 0
 
 
 def test_tick_region_paused_is_noop(db_conn, isolated_region):

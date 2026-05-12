@@ -6,16 +6,20 @@ import EntitiesView from "./components/EntitiesView";
 import HousesView from "./components/HousesView";
 import FactionsView from "./components/FactionsView";
 import SchoolsView from "./components/SchoolsView";
+import RegionsView from "./components/RegionsView";
 import ItemsView from "./components/ItemsView";
 import AbilitiesView from "./components/AbilitiesView";
 import TraitsView from "./components/TraitsView";
 import RacesView from "./components/RacesView";
+import SettingsView from "./components/SettingsView";
 import Placeholder from "./components/Placeholder";
 import { SECTIONS, type SectionId } from "./sections";
 
 function App() {
   const [active, setActive] = useState<SectionId>("dashboard");
-  const [refreshKey, setRefreshKey] = useState(0);
+  const [simRunning, setSimRunning] = useState<boolean | null>(null);
+  const [clockRefreshKey, setClockRefreshKey] = useState(0);
+  const refreshKey = 0;
 
   const section = SECTIONS.find((s) => s.id === active);
   const inDashboard = active === "dashboard";
@@ -31,7 +35,9 @@ function App() {
       <TopBar
         active={active}
         onChange={setActive}
-        onAdvance={() => setRefreshKey((k) => k + 1)}
+        simRunning={simRunning}
+        onSimRunningChange={setSimRunning}
+        clockRefreshKey={clockRefreshKey}
       />
 
       <main className="content">
@@ -41,16 +47,25 @@ function App() {
             <div className="page-divider" />
           </header>
         )}
-        <div className="content-body">{renderSection(active, refreshKey)}</div>
+        <div className="content-body">
+          {renderSection(active, refreshKey, simRunning, () =>
+            setClockRefreshKey((key) => key + 1),
+          )}
+        </div>
       </main>
     </div>
   );
 }
 
-function renderSection(active: SectionId, refreshKey: number) {
+function renderSection(
+  active: SectionId,
+  refreshKey: number,
+  simRunning: boolean | null,
+  onClockChanged: () => void,
+) {
   switch (active) {
     case "dashboard":
-      return <Dashboard refreshKey={refreshKey} />;
+      return <Dashboard refreshKey={refreshKey} simRunning={simRunning} />;
     case "entities":
       return <EntitiesView refreshKey={refreshKey} />;
     case "houses":
@@ -59,6 +74,8 @@ function renderSection(active: SectionId, refreshKey: number) {
       return <FactionsView refreshKey={refreshKey} />;
     case "schools":
       return <SchoolsView refreshKey={refreshKey} />;
+    case "regions":
+      return <RegionsView refreshKey={refreshKey} />;
     case "items":
       return <ItemsView refreshKey={refreshKey} />;
     case "abilities":
@@ -67,6 +84,14 @@ function renderSection(active: SectionId, refreshKey: number) {
       return <TraitsView refreshKey={refreshKey} />;
     case "races":
       return <RacesView refreshKey={refreshKey} />;
+    case "settings":
+      return (
+        <SettingsView
+          refreshKey={refreshKey}
+          simRunning={simRunning}
+          onClockChanged={onClockChanged}
+        />
+      );
     case "towns":
       return (
         <Placeholder

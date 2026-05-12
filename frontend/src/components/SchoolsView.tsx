@@ -87,8 +87,8 @@ function SchoolDetailPanel({ school }: { school: SchoolDetail }) {
             <thead>
               <tr>
                 <th>Entity</th>
-                <th>Status</th>
-                <th>Enrolled</th>
+                <th>Rank</th>
+                <th>Reputation</th>
               </tr>
             </thead>
             <tbody>
@@ -96,9 +96,9 @@ function SchoolDetailPanel({ school }: { school: SchoolDetail }) {
                 <tr key={r.entity_id}>
                   <td>{r.name}</td>
                   <td>
-                    <Tag tone={statusTone(r.status)}>{r.status}</Tag>
+                    <Tag tone="neutral">{r.rank}</Tag>
                   </td>
-                  <td>{r.enrolled_at}</td>
+                  <td>{r.reputation}</td>
                 </tr>
               ))}
             </tbody>
@@ -107,13 +107,6 @@ function SchoolDetailPanel({ school }: { school: SchoolDetail }) {
       </Section>
     </div>
   );
-}
-
-function statusTone(status: string): "info" | "success" | "warning" | "neutral" {
-  if (status === "instructor") return "warning";
-  if (status === "graduate") return "success";
-  if (status === "student") return "info";
-  return "neutral";
 }
 
 export default SchoolsView;

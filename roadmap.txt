@@ -188,7 +188,7 @@ Schema lives in `backend/src/rts_world/db/schema.sql`. Already in place:
   Entity components:
     entities, entity_traits, entity_factions, entity_items,
     entity_abilities, entity_schools, entity_zones, entity_positions,
-    relationships
+    relationships, relationship_terms
 
   Simulation infrastructure (added during cleanup pass):
     regions          -- id, name, kind, tick_interval_seconds,
@@ -200,7 +200,8 @@ Schema lives in `backend/src/rts_world/db/schema.sql`. Already in place:
 
   Indexes added:
     idx_entity_zones_region, idx_world_events_region_time,
-    idx_regions_due (partial: WHERE paused = FALSE)
+    idx_regions_due (partial: WHERE paused = FALSE),
+    idx_relationship_terms_pair, idx_relationship_terms_source
 
 Seeding pipeline (`backend/src/rts_world/db/seed.py`):
     Reads JSON from `game_data/{races,factions,stats,traits,abilities,
@@ -295,8 +296,11 @@ architecture never has to change.
 
 In rough difficulty / dependency order:
 
-  1. Opinion drift in relationships (decay toward 0 over time).
-     Validates: bulk UPDATE pattern, event emission.
+  1. DONE: Relationship term dynamics.
+     Relationship opinions are now derived from explainable
+     `relationship_terms`. Temporary terms can decay toward 0 or expire,
+     then cached `relationships.opinion` is recalculated and clamped.
+     Validates: bulk UPDATE pattern and pure system unit tests.
 
   2. Needs (hunger, fatigue, mood) tied to traits.
      Validates: per-entity state mutation, system composition.
@@ -380,6 +384,8 @@ After (6) and (7) the world is genuinely "alive" between player visits.
       - runner.py    -- CLI (once/forever/status/seed-regions)
       - systems/__init__.py -- default_systems() registry
       - systems/heartbeat.py -- first stub system; emits "region.tick"
+      - systems/relationships.py -- first real system; decays relationship
+                        terms and refreshes cached opinions
   * Convenience launcher `backend/scripts/sim.py` that adds the right
     sys.path so the CLI works from a fresh shell without PYTHONPATH.
   * Makefile targets: sim-status, sim-seed, sim-once REGION=N,
@@ -404,28 +410,38 @@ After (6) and (7) the world is genuinely "alive" between player visits.
   * Systems mutating per-entity rows MUST call
     state.mark_entity_dirty(...) / state.mark_relationship_dirty(...)
     or the change won't be flushed.
-  * write_region_state already implements the relationships flush; the
-    entities flush is a placeholder branch (no current system mutates
-    entity rows). Wire it up when the first system needs it.
+  * write_region_state already implements relationship and relationship-term
+    flushes; the entities flush is a placeholder branch because no current
+    system mutates entity rows. Wire it up when the first system needs it.
+
+11.4 Relationship dynamics (current branch)
+  * Added `relationship_terms` as the explainable source rows behind cached
+    `relationships.opinion`.
+  * Template relationships now seed matching terms, including kinship terms
+    for parent/child/father/mother/sibling/spouse style relationships.
+  * `relationship_dynamics` runs before the heartbeat system each tick. It
+    decays temporary terms toward 0, zeroes expired terms, sums terms by
+    directed subject/target pair, clamps the cached opinion to -100..100,
+    and marks only changed rows dirty.
+  * `regions.load_region_state` now loads relationship terms for in-region
+    pairs, and `regions.write_region_state` bulk-updates dirty terms plus
+    dirty cached opinions.
+  * Unit coverage in `tests/test_relationship_system.py` verifies clamping,
+    directional kinship, temporary decay, and expiry.
 
 --------------------------------------------------------------------------------
 12. IMMEDIATE NEXT STEPS
 --------------------------------------------------------------------------------
 
-  [ ] First real system: opinion drift (§9.1) in
-      `sim/systems/relationships.py`. Each tick, nudge every relationship
-      one step toward 0 and mark it dirty. Register in default_systems().
-      Add a unit test (pure, no DB) that constructs a tiny RegionState
-      and asserts opinions move correctly. The bulk-UPDATE path in
-      regions.write_region_state already handles this — no DB-layer
-      changes required.
+  [ ] Verify the relationship dynamics slice end-to-end:
+      run `pytest tests/test_relationship_system.py` for the pure system and
+      `pytest tests/test_sim_tick.py` against local Postgres to confirm the
+      tick path loads relationship terms and flushes dirty opinions.
 
-  [ ] Once a real system exists, wire up the entities flush in
-      regions.write_region_state (currently a `pass` placeholder). At
-      minimum: pick the per-entity scalar columns the new systems mutate,
-      add them to the SELECT in load_region_state, and add the matching
-      executemany UPDATE. Keep all column names in one place to avoid
-      drift.
+  [ ] Next real system: needs (§9.2). Add hunger/fatigue/mood storage,
+      load the needed columns in `regions.load_region_state`, mutate them in
+      a pure `sim/systems/needs.py`, then wire the matching bulk entity
+      UPDATE in `regions.write_region_state`.
 
   [ ] Backfill `entity_zones.region_id` from the legacy `zone` text and
       start populating it on entity creation (seed_entities.py). Without

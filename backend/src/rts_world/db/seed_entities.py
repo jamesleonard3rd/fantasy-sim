@@ -104,21 +104,98 @@ def insert_entity_house(
         )
 
 
+def insert_entity_region(
+    conn: psycopg.Connection,
+    entity_id: int,
+    region_name: str | None,
+    region_lookup: Dict[str, int],
+) -> None:
+    if not region_name:
+        return
+    region_id = region_lookup.get(region_name)
+    if region_id is None:
+        raise ValueError(
+            f"Unknown region '{region_name}' for entity_id {entity_id}; "
+            "did you run seed_regions() first?"
+        )
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO entity_zones (entity_id, zone, region_id, updated_at)
+            VALUES (%s, %s, %s, NOW())
+            ON CONFLICT (entity_id) DO UPDATE
+                SET zone = EXCLUDED.zone,
+                    region_id = EXCLUDED.region_id,
+                    updated_at = NOW()
+            """,
+            (entity_id, region_name, region_id),
+        )
+
+
+KINSHIP_RELATIONSHIP_TYPES = {
+    "parent",
+    "child",
+    "father",
+    "mother",
+    "sibling",
+    "spouse",
+}
+
+
+def _relationship_source_type(relationship_type: str) -> str:
+    if relationship_type in KINSHIP_RELATIONSHIP_TYPES:
+        return "kinship"
+    return "manual"
+
+
 def insert_relationships(conn: psycopg.Connection, rels: List[Dict[str, Any]], id_map: Dict[str, int]) -> None:
     if not rels:
         return
     rows: List[Tuple[int, int, int]] = []
+    term_rows: List[Tuple[int, int, str, str, str, int, str]] = []
     for r in rels:
         frm = id_map.get(r["from"])
         to = id_map.get(r["to"])
         if frm is None or to is None:
             raise ValueError(f"Relationship references unknown template ids: {r}")
-        rows.append((frm, to, int(r.get("opinion", 0))))
+        opinion = int(r.get("opinion", 0))
+        relationship_type = str(r.get("type", "manual"))
+        rows.append((frm, to, opinion))
+        term_rows.append(
+            (
+                frm,
+                to,
+                _relationship_source_type(relationship_type),
+                relationship_type,
+                "template",
+                opinion,
+                json.dumps({"template_type": relationship_type}),
+            )
+        )
     with conn.cursor() as cur:
         cur.executemany(
             "INSERT INTO relationships (subject_entity_id, target_entity_id, opinion, last_updated) "
-            "VALUES (%s, %s, %s, NOW()) ON CONFLICT DO NOTHING",
+            "VALUES (%s, %s, %s, NOW()) "
+            "ON CONFLICT (subject_entity_id, target_entity_id) DO UPDATE "
+            "SET opinion = EXCLUDED.opinion, last_updated = NOW()",
             rows,
+        )
+        cur.executemany(
+            """
+            INSERT INTO relationship_terms (
+                subject_entity_id, target_entity_id, source_type, source_key,
+                source_instance, value, payload, updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, NOW())
+            ON CONFLICT (
+                subject_entity_id, target_entity_id, source_type, source_key,
+                source_instance
+            ) DO UPDATE
+                SET value = EXCLUDED.value,
+                    payload = EXCLUDED.payload,
+                    updated_at = NOW()
+            """,
+            term_rows,
         )
 
 
@@ -128,6 +205,7 @@ def seed_templates(
     race_lookup: Dict[str, int],
     trait_lookup: Dict[str, int],
     house_lookup: Dict[str, int],
+    region_lookup: Dict[str, int],
 ) -> Dict[str, int]:
     id_map: Dict[str, int] = {}
     for ent in templates.get("entities", []):
@@ -145,6 +223,12 @@ def seed_templates(
             entity_data.get("house"),
             entity_data.get("role"),
             house_lookup,
+        )
+        insert_entity_region(
+            conn,
+            entity_id,
+            entity_data.get("region"),
+            region_lookup,
         )
         id_map[template_id] = entity_id
     insert_relationships(conn, templates.get("relationships", []), id_map)
@@ -176,9 +260,10 @@ def main() -> None:
         race_lookup = fetch_lookup(conn, "races")
         trait_lookup = fetch_lookup(conn, "traits")
         house_lookup = fetch_house_lookup(conn)
+        region_lookup = fetch_lookup(conn, "regions")
 
         if not args.skip_templates:
-            seed_templates(conn, templates, race_lookup, trait_lookup, house_lookup)
+            seed_templates(conn, templates, race_lookup, trait_lookup, house_lookup, region_lookup)
 
         if args.random_count > 0:
             seed_random_entities(conn, args.random_count, race_lookup, trait_lookup)

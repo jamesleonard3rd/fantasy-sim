@@ -4,10 +4,11 @@ import type {
   FactionSummary,
   HouseSummary,
   SchoolSummary,
+  SimEvent,
   Summary,
 } from "../types";
 import { apiGet } from "../api";
-import { ErrorBox, Loader, Tag } from "./common";
+import { ErrorBox, Loader, Tag, formatDate } from "./common";
 
 type DashboardData = {
   summary: Summary;
@@ -28,14 +29,19 @@ const KEY_TILES: { key: keyof Summary; label: string }[] = [
   { key: "relationships", label: "Bonds" },
 ];
 
-function Dashboard({ refreshKey }: { refreshKey: number }) {
+function Dashboard({
+  refreshKey,
+  simRunning,
+}: {
+  refreshKey: number;
+  simRunning: boolean | null;
+}) {
   const [data, setData] = useState<DashboardData | null>(null);
+  const [tidings, setTidings] = useState<SimEvent[]>([]);
   const [error, setError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
-    setData(null);
-    setError("");
     Promise.all([
       apiGet<Summary>("/summary"),
       apiGet<EntitySummary[]>("/entities"),
@@ -45,6 +51,7 @@ function Dashboard({ refreshKey }: { refreshKey: number }) {
     ])
       .then(([summary, entities, factions, schools, houses]) => {
         if (cancelled) return;
+        setError("");
         setData({ summary, entities, factions, schools, houses });
       })
       .catch((err: Error) => {
@@ -54,6 +61,33 @@ function Dashboard({ refreshKey }: { refreshKey: number }) {
       cancelled = true;
     };
   }, [refreshKey]);
+
+  useEffect(() => {
+    if (simRunning !== true) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadTidings = () => {
+      apiGet<SimEvent[]>("/sim/events?limit=8")
+        .then((events) => {
+          if (!cancelled) {
+            setTidings(events);
+          }
+        })
+        .catch(() => {
+          // Keep the dashboard usable if the test-event feed is not ready yet.
+        });
+    };
+
+    loadTidings();
+    const id = window.setInterval(loadTidings, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [simRunning]);
 
   if (error) return <ErrorBox message={error} />;
   if (!data) return <Loader label="Surveying the realm…" />;
@@ -104,11 +138,22 @@ function Dashboard({ refreshKey }: { refreshKey: number }) {
             <span className="muted">Recent activity</span>
           </header>
           <ul className="news-list">
-            <NewsItem
-              tone="info"
-              title="World seeded with template entities"
-              meta={`${entities.length} entities are now alive in the world.`}
-            />
+            {tidings.length > 0 ? (
+              tidings.slice(0, 4).map((event) => (
+                <NewsItem
+                  key={event.id}
+                  tone="info"
+                  title={event.message}
+                  meta={formatDate(event.occurred_at)}
+                />
+              ))
+            ) : (
+              <NewsItem
+                tone="info"
+                title="Start the sim to hear fresh tidings."
+                meta={`${entities.length} entities are waiting for the clock to move.`}
+              />
+            )}
             <NewsItem
               tone="success"
               title={`${houses.length} noble houses recognized`}
@@ -129,8 +174,8 @@ function Dashboard({ refreshKey }: { refreshKey: number }) {
             />
             <NewsItem
               tone="warning"
-              title="Towns & settlements pending"
-              meta="The Realm tab will fill in once the world map is implemented."
+              title="Regions are live"
+              meta="Open the Realm tab to inspect simulation regions and their residents."
             />
           </ul>
         </section>

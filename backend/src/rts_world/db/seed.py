@@ -4,6 +4,7 @@ Seed the database from JSON game-data files.
 Layout (all under <repo>/game_data):
   races/races.json          -> races + nested subraces
   factions/factions.json    -> factions (with optional parent name)
+  regions/templates.json    -> simulation regions (name, type, parent, tick cadence)
   stats/stats.json          -> stats lookup
   traits/traits.json        -> traits (+ modifier rows, + ability links)
   abilities/abilities.json  -> abilities
@@ -20,6 +21,7 @@ from typing import Any, Iterable
 
 import psycopg
 
+from ..sim.regions import upsert_region
 from .db import get_connection
 
 
@@ -38,6 +40,7 @@ ABILITIES_FILE = GAME_DATA / "abilities" / "abilities.json"
 ITEMS_FILE = GAME_DATA / "items" / "items.json"
 SCHOOLS_DIR = GAME_DATA / "schools"
 HOUSES_FILE = GAME_DATA / "houses" / "templates.json"
+REGIONS_FILE = GAME_DATA / "regions" / "templates.json"
 
 
 # ---------- helpers ----------
@@ -137,6 +140,72 @@ def seed_factions(conn: psycopg.Connection) -> None:
 
     conn.commit()
     print(f"  OK {len(factions)} factions")
+
+
+def load_region_templates() -> list[dict[str, Any]]:
+    """Entries under ``regions`` in ``game_data/regions/templates.json``."""
+    data = _load_json(REGIONS_FILE)
+    if not data:
+        return []
+    raw = data.get("regions", [])
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name")
+        if not name:
+            continue
+        out.append(item)
+    return out
+
+
+def seed_regions(conn: psycopg.Connection) -> None:
+    """Upsert regions from templates (same file as ``seed-regions`` CLI)."""
+    print("Seeding regions...")
+    templates = load_region_templates()
+    if not templates:
+        print(f"  WARN no region templates in {REGIONS_FILE.relative_to(PROJECT_DIR)}")
+        return
+
+    region_ids: dict[str, int] = {}
+    for r in templates:
+        region_ids[str(r["name"])] = upsert_region(
+            conn,
+            name=str(r["name"]),
+            region_type=str(r.get("type", r.get("kind", "region"))),
+            parent_id=None,
+            tick_interval_seconds=int(r.get("tick_interval_seconds", 180)),
+            paused=bool(r.get("paused", False)),
+        )
+
+    for r in templates:
+        parent_name = r.get("parent")
+        if not parent_name:
+            continue
+        parent_id = region_ids.get(str(parent_name))
+        if parent_id is None:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id FROM regions WHERE name = %s",
+                    (str(parent_name),),
+                )
+                row = cur.fetchone()
+                parent_id = int(row[0]) if row else None
+        if parent_id is None:
+            print(f"  WARN region '{r['name']}' references unknown parent '{parent_name}'")
+            continue
+        upsert_region(
+            conn,
+            name=str(r["name"]),
+            region_type=str(r.get("type", r.get("kind", "region"))),
+            parent_id=parent_id,
+            tick_interval_seconds=int(r.get("tick_interval_seconds", 180)),
+            paused=bool(r.get("paused", False)),
+        )
+    conn.commit()
+    print(f"  OK {len(templates)} regions")
 
 
 def seed_stats(conn: psycopg.Connection) -> None:
@@ -391,6 +460,11 @@ def seed_schools(conn: psycopg.Connection) -> None:
             faction_id = row[0]
 
             cur.execute(
+                "UPDATE factions SET kind = 'school' WHERE id = %s",
+                (faction_id,),
+            )
+
+            cur.execute(
                 """
                 INSERT INTO schools (
                     faction_id, prestige, capacity,
@@ -429,10 +503,11 @@ def seed_database(*, apply_schema: bool = True) -> None:
         if apply_schema:
             _run_sql_file(conn, SCHEMA_FILE)
 
-        # Order matters: races -> factions -> stats -> abilities -> items
+        # Order matters: races -> factions -> regions -> stats -> abilities -> items
         # -> traits -> schools -> houses
         seed_races(conn)
         seed_factions(conn)
+        seed_regions(conn)
         seed_stats(conn)
         seed_abilities(conn)
         seed_items(conn)

@@ -14,11 +14,10 @@ from dataclasses import dataclass
 import psycopg
 
 
-# In-game days per real-time wall-clock advance is purely a knob; we keep
-# the conversion explicit and conservative. 1 game day per 240 ticks roughly
-# matches "a region ticks every ~3 minutes -> ~12 hours of game time per real
-# day" without committing the design to anything yet. Adjust freely.
-TICKS_PER_GAME_DAY: int = 240
+# The visible sim clock is a normal 24-hour day. One real-world minute equals
+# one full in-game day, so one real-world second advances the clock 24 minutes.
+GAME_MINUTES_PER_DAY: int = 24 * 60
+GAME_MINUTES_PER_REAL_SECOND: int = 24
 
 
 @dataclass(frozen=True)
@@ -43,7 +42,7 @@ def read_clock(conn: psycopg.Connection) -> WorldClock:
 
 
 def advance_clock(conn: psycopg.Connection) -> WorldClock:
-    """Bump game_tick by 1, rolling game_day when it crosses TICKS_PER_GAME_DAY.
+    """Advance the stored clock based on wall time since its last update.
 
     Returns the *new* clock value. Caller is responsible for committing — the
     tick orchestrator wraps load + simulate + write + advance in one
@@ -52,15 +51,34 @@ def advance_clock(conn: psycopg.Connection) -> WorldClock:
     with conn.cursor() as cur:
         cur.execute(
             """
-            UPDATE world_clock
-               SET game_tick = game_tick + 1,
-                   game_day  = game_day + ((game_tick + 1) / %s)::int
-                              - (game_tick / %s)::int,
+            WITH current_clock AS (
+                SELECT game_day,
+                       game_tick,
+                       GREATEST(
+                           1,
+                           ROUND(EXTRACT(EPOCH FROM (NOW() - updated_at)) * %s)::bigint
+                       ) AS elapsed_game_minutes
+                  FROM world_clock
+                 WHERE id = 1
+            ),
+            next_clock AS (
+                SELECT game_day * %s + game_tick + elapsed_game_minutes AS total_minutes
+                  FROM current_clock
+            )
+            UPDATE world_clock wc
+               SET game_day = (next_clock.total_minutes / %s)::int,
+                   game_tick = MOD(next_clock.total_minutes, %s),
                    updated_at = NOW()
-             WHERE id = 1
+              FROM next_clock
+             WHERE wc.id = 1
             RETURNING game_day, game_tick
             """,
-            (TICKS_PER_GAME_DAY, TICKS_PER_GAME_DAY),
+            (
+                GAME_MINUTES_PER_REAL_SECOND,
+                GAME_MINUTES_PER_DAY,
+                GAME_MINUTES_PER_DAY,
+                GAME_MINUTES_PER_DAY,
+            ),
         )
         row = cur.fetchone()
         if row is None:
@@ -71,3 +89,16 @@ def advance_clock(conn: psycopg.Connection) -> WorldClock:
             )
             return WorldClock(game_day=0, game_tick=1)
         return WorldClock(game_day=int(row[0]), game_tick=int(row[1]))
+
+
+def touch_clock(conn: psycopg.Connection) -> None:
+    """Reset the wall-clock anchor without advancing game time."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO world_clock (id, game_day, game_tick, updated_at)
+            VALUES (1, 0, 0, NOW())
+            ON CONFLICT (id) DO UPDATE
+                SET updated_at = NOW()
+            """
+        )

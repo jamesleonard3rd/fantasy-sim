@@ -9,7 +9,7 @@ Usage:
     python backend/scripts/sim.py once    --region-id 1
     python backend/scripts/sim.py forever
     python backend/scripts/sim.py status
-    python backend/scripts/sim.py seed-regions --regions 3
+    python backend/scripts/sim.py seed-regions [--reset] [--regions N]
 """
 from __future__ import annotations
 

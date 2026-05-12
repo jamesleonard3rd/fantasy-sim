@@ -14,6 +14,7 @@ def heartbeat(state: RegionState, ctx: TickContext) -> list[PendingEvent]:
     return [
         PendingEvent(
             kind="region.tick",
+            significance=1,
             payload={
                 "region_id": state.region_id,
                 "region_name": state.region["name"],

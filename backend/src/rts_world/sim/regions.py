@@ -14,6 +14,7 @@ seed_regions_with_assignment) so all region-table SQL is in one file.
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any, Iterable
 
@@ -29,7 +30,7 @@ def get_region(conn: psycopg.Connection, region_id: int) -> dict[str, Any] | Non
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT id, name, kind, tick_interval_seconds,
+            SELECT id, name, type, parent_id, tick_interval_seconds,
                    last_tick_at, paused
               FROM regions
              WHERE id = %s
@@ -42,10 +43,11 @@ def get_region(conn: psycopg.Connection, region_id: int) -> dict[str, Any] | Non
         return {
             "id": int(row[0]),
             "name": row[1],
-            "kind": row[2],
-            "tick_interval_seconds": int(row[3]),
-            "last_tick_at": row[4],
-            "paused": bool(row[5]),
+            "type": row[2],
+            "parent_id": int(row[3]) if row[3] is not None else None,
+            "tick_interval_seconds": int(row[4]),
+            "last_tick_at": row[5],
+            "paused": bool(row[6]),
         }
 
 
@@ -192,6 +194,35 @@ def load_region_state(conn: psycopg.Connection, region_id: int) -> RegionState |
                     }
                 )
 
+            cur.execute(
+                """
+                SELECT id, subject_entity_id, target_entity_id, source_type,
+                       source_key, source_instance, value, decay_per_tick,
+                       expires_at_game_tick, payload, updated_at
+                  FROM relationship_terms
+                 WHERE subject_entity_id = ANY(%s)
+                   AND target_entity_id  = ANY(%s)
+                 ORDER BY id
+                """,
+                (list(ids), list(ids)),
+            )
+            for row in cur.fetchall():
+                state.relationship_terms.append(
+                    {
+                        "id": int(row[0]),
+                        "subject_entity_id": int(row[1]),
+                        "target_entity_id": int(row[2]),
+                        "source_type": row[3],
+                        "source_key": row[4],
+                        "source_instance": row[5],
+                        "value": int(row[6]),
+                        "decay_per_tick": int(row[7]),
+                        "expires_at_game_tick": int(row[8]) if row[8] is not None else None,
+                        "payload": row[9],
+                        "updated_at": row[10],
+                    }
+                )
+
     return state
 
 
@@ -212,12 +243,48 @@ def write_region_state(
     summary = {
         "entities_updated": 0,
         "relationships_updated": 0,
+        "relationship_terms_updated": 0,
         "events_inserted": 0,
     }
 
     region_id = state.region_id
 
-    # Relationships: bulk update only the dirty ones.
+    # Relationship terms: bulk update changed contribution rows. New terms are
+    # inserted by the system that creates them; this path owns per-tick mutation
+    # such as decay toward zero.
+    if state.dirty_relationship_term_ids:
+        by_id = {int(t["id"]): t for t in state.relationship_terms if t.get("id") is not None}
+        rows = []
+        for term_id in state.dirty_relationship_term_ids:
+            term = by_id.get(term_id)
+            if term is None:
+                continue
+            rows.append(
+                (
+                    int(term["value"]),
+                    int(term.get("decay_per_tick", 0)),
+                    term.get("expires_at_game_tick"),
+                    json.dumps(term.get("payload")) if term.get("payload") is not None else None,
+                    term_id,
+                )
+            )
+        if rows:
+            with conn.cursor() as cur:
+                cur.executemany(
+                    """
+                    UPDATE relationship_terms
+                       SET value = %s,
+                           decay_per_tick = %s,
+                           expires_at_game_tick = %s,
+                           payload = %s::jsonb,
+                           updated_at = NOW()
+                     WHERE id = %s
+                    """,
+                    rows,
+                )
+            summary["relationship_terms_updated"] = len(rows)
+
+    # Relationships: upsert only the dirty cached opinions.
     if state.dirty_relationship_keys:
         # Build a (subject, target, opinion) tuple list from the in-memory rows.
         by_key = {
@@ -234,11 +301,13 @@ def write_region_state(
             with conn.cursor() as cur:
                 cur.executemany(
                     """
-                    UPDATE relationships
-                       SET opinion = %s,
-                           last_updated = NOW()
-                     WHERE subject_entity_id = %s
-                       AND target_entity_id  = %s
+                    INSERT INTO relationships (
+                        opinion, subject_entity_id, target_entity_id, last_updated
+                    )
+                    VALUES (%s, %s, %s, NOW())
+                    ON CONFLICT (subject_entity_id, target_entity_id) DO UPDATE
+                        SET opinion = EXCLUDED.opinion,
+                            last_updated = NOW()
                     """,
                     rows,
                 )
@@ -265,21 +334,25 @@ def upsert_region(
     conn: psycopg.Connection,
     *,
     name: str,
-    kind: str = "wilderness",
+    region_type: str = "region",
+    parent_id: int | None = None,
     tick_interval_seconds: int = 180,
+    paused: bool = False,
 ) -> int:
     """Create a region by name if it doesn't exist; return its id."""
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO regions (name, kind, tick_interval_seconds)
-            VALUES (%s, %s, %s)
+            INSERT INTO regions (name, type, parent_id, tick_interval_seconds, paused)
+            VALUES (%s, %s, %s, %s, %s)
             ON CONFLICT (name) DO UPDATE
-                SET kind = EXCLUDED.kind,
-                    tick_interval_seconds = EXCLUDED.tick_interval_seconds
+                SET type = EXCLUDED.type,
+                    parent_id = EXCLUDED.parent_id,
+                    tick_interval_seconds = EXCLUDED.tick_interval_seconds,
+                    paused = EXCLUDED.paused
             RETURNING id
             """,
-            (name, kind, tick_interval_seconds),
+            (name, region_type, parent_id, tick_interval_seconds, paused),
         )
         row = cur.fetchone()
         assert row is not None

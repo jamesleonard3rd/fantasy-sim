@@ -28,6 +28,7 @@ export type EntityTrait = { id: number; name: string; description: string | null
 export type EntityFactionMembership = {
   id: number;
   name: string;
+  kind: FactionKind;
   rank: string;
   reputation: number;
 };
@@ -49,13 +50,12 @@ export type EntityAbility = {
   level: number;
   last_used_at: string | null;
 };
-export type EntitySchool = {
-  school_id: number;
-  school_name: string;
-  status: string;
-  enrolled_at: string;
-};
-export type EntityZone = { zone: string; updated_at: string } | null;
+export type EntityZone = {
+  zone: string;
+  region_id: number | null;
+  region_name: string | null;
+  updated_at: string;
+} | null;
 export type EntityPosition = {
   x: number;
   y: number;
@@ -84,7 +84,6 @@ export type EntityDetail = EntitySummary & {
   factions: EntityFactionMembership[];
   items: EntityItem[];
   abilities: EntityAbility[];
-  schools: EntitySchool[];
   zone: EntityZone;
   position: EntityPosition;
   relationships: EntityRelationship[];
@@ -110,7 +109,6 @@ export type FactionSummary = {
   parent_name: string | null;
   member_count: number;
   child_count: number;
-  is_school: boolean;
   is_house: boolean;
 };
 
@@ -151,7 +149,7 @@ export type FactionSchoolBrief = {
 
 export type FactionDetail = Omit<
   FactionSummary,
-  "member_count" | "child_count" | "is_school" | "is_house"
+  "member_count" | "child_count" | "is_house"
 > & {
   children: FactionChild[];
   members: FactionMember[];
@@ -176,14 +174,43 @@ export type SchoolSummary = {
 export type SchoolRosterEntry = {
   entity_id: number;
   name: string;
-  status: string;
-  enrolled_at: string;
+  rank: string;
+  reputation: number;
 };
 
 export type SchoolDetail = SchoolSummary & {
   description: string | null;
   entry_requirements: unknown;
   roster: SchoolRosterEntry[];
+};
+
+export type RegionSummary = {
+  id: number;
+  name: string;
+  type: string;
+  parent_id: number | null;
+  parent_name: string | null;
+  tick_interval_seconds: number;
+  paused: boolean;
+  last_tick_at: string | null;
+  direct_entity_count: number;
+  entity_count: number;
+  total_entity_count: number;
+  child_count: number;
+};
+
+export type RegionResident = {
+  id: number;
+  name: string;
+  zone: string;
+  region_id: number;
+  region_name: string;
+  region_type: string;
+};
+
+export type RegionDetail = RegionSummary & {
+  children: { id: number; name: string; type: string }[];
+  residents: RegionResident[];
 };
 
 export type Item = {
@@ -257,4 +284,40 @@ export type HouseDetail = HouseSummary & {
   magic_weights: Record<string, number> | null;
   members: HouseMember[];
   affiliated_factions: HouseAffiliatedFaction[];
+};
+
+export type SimStatus = {
+  running: boolean;
+  tick_count: number;
+  min_interval_seconds: number;
+  max_interval_seconds: number;
+  next_tick_at: string | null;
+  last_tick_at: string | null;
+  last_region_id: number | null;
+  last_region_name: string | null;
+  last_game_day: number | null;
+  last_game_tick: number | null;
+  last_events_emitted: number;
+  last_error: string | null;
+};
+
+export type SimEvent = {
+  id: number;
+  kind: string;
+  significance: number;
+  payload: Record<string, unknown> | null;
+  occurred_at: string;
+  region_name: string | null;
+  subject_name: string | null;
+  target_name: string | null;
+  message: string;
+};
+
+export type SimClock = {
+  running: boolean;
+  game_day: number;
+  hour: number;
+  minute: number;
+  minute_of_day: number;
+  real_seconds_per_game_day: number;
 };

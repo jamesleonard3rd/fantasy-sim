@@ -116,11 +116,42 @@ CREATE TABLE IF NOT EXISTS entity_houses (
 CREATE TABLE IF NOT EXISTS regions (
     id SERIAL PRIMARY KEY,
     name TEXT UNIQUE NOT NULL,
-    kind TEXT NOT NULL DEFAULT 'wilderness',
+    type TEXT NOT NULL DEFAULT 'region',
+    parent_id INT REFERENCES regions(id) ON DELETE SET NULL,
     tick_interval_seconds INT NOT NULL DEFAULT 180 CHECK (tick_interval_seconds > 0),
     last_tick_at TIMESTAMP WITH TIME ZONE,
-    paused BOOLEAN NOT NULL DEFAULT FALSE
+    paused BOOLEAN NOT NULL DEFAULT FALSE,
+    CHECK (parent_id IS NULL OR parent_id <> id)
 );
+ALTER TABLE regions
+    ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'region';
+ALTER TABLE regions
+    ADD COLUMN IF NOT EXISTS parent_id INT REFERENCES regions(id) ON DELETE SET NULL;
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+          FROM information_schema.columns
+         WHERE table_name = 'regions'
+           AND column_name = 'kind'
+    ) THEN
+        UPDATE regions SET type = kind WHERE type = 'region' AND kind IS NOT NULL;
+    END IF;
+END $$;
+ALTER TABLE regions
+    DROP COLUMN IF EXISTS kind;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+          FROM pg_constraint
+         WHERE conname = 'regions_no_self_parent_check'
+    ) THEN
+        ALTER TABLE regions
+            ADD CONSTRAINT regions_no_self_parent_check
+            CHECK (parent_id IS NULL OR parent_id <> id);
+    END IF;
+END $$;
 
 -- Zone: always loaded for world simulation. `zone` is a free-text label kept
 -- for backwards compatibility; new code should populate `region_id`.
@@ -183,7 +214,6 @@ CREATE TABLE IF NOT EXISTS schools (
     faction_id  INT PRIMARY KEY REFERENCES factions(id) ON DELETE CASCADE,
     prestige INT NOT NULL,
     capacity INT, 
-    current_enrollment INT NOT NULL DEFAULT 0, 
     min_enrollment_age INT,
     max_enrollment_age INT,
     enrollment_length INT, --years
@@ -195,14 +225,6 @@ CREATE TABLE IF NOT EXISTS schools (
     entry_requirements JSONB
 );
 
-CREATE TABLE IF NOT EXISTS entity_schools (
-    entity_id INT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
-    school_id INT NOT NULL REFERENCES schools(faction_id) ON DELETE CASCADE,
-    status TEXT NOT NULL CHECK (status IN ('student', 'graduate', 'instructor')),
-    enrolled_at DATE DEFAULT CURRENT_DATE NOT NULL,
-    PRIMARY KEY (entity_id, school_id)
-);
-
 CREATE TABLE IF NOT EXISTS relationships (
     subject_entity_id INT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
     target_entity_id INT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
@@ -212,6 +234,29 @@ CREATE TABLE IF NOT EXISTS relationships (
     CHECK (subject_entity_id <> target_entity_id)
 );
 
+-- Relationship terms are the explainable source rows behind
+-- relationships.opinion. The cached opinion remains fast to read, while the
+-- terms preserve why the opinion has its current value.
+CREATE TABLE IF NOT EXISTS relationship_terms (
+    id BIGSERIAL PRIMARY KEY,
+    subject_entity_id INT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    target_entity_id INT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    source_type TEXT NOT NULL,
+    source_key TEXT NOT NULL,
+    source_instance TEXT NOT NULL DEFAULT '',
+    value INT NOT NULL CHECK (value BETWEEN -100 AND 100),
+    decay_per_tick INT NOT NULL DEFAULT 0 CHECK (decay_per_tick >= 0),
+    expires_at_game_tick BIGINT,
+    payload JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    CHECK (subject_entity_id <> target_entity_id),
+    UNIQUE (subject_entity_id, target_entity_id, source_type, source_key, source_instance),
+    FOREIGN KEY (subject_entity_id, target_entity_id)
+        REFERENCES relationships(subject_entity_id, target_entity_id)
+        ON DELETE CASCADE
+);
+
 -- World events: append-only log of things the background sim did.
 -- Unreal pulls events for a region since the player's last_seen timestamp on
 -- region entry to summarize / replay what happened while away.
@@ -219,11 +264,26 @@ CREATE TABLE IF NOT EXISTS world_events (
     id BIGSERIAL PRIMARY KEY,
     region_id INT REFERENCES regions(id) ON DELETE SET NULL,
     kind TEXT NOT NULL,
+    significance SMALLINT NOT NULL DEFAULT 1,
     subject_entity_id INT REFERENCES entities(id) ON DELETE SET NULL,
     target_entity_id INT REFERENCES entities(id) ON DELETE SET NULL,
     payload JSONB,
     occurred_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
+ALTER TABLE world_events
+    ADD COLUMN IF NOT EXISTS significance SMALLINT NOT NULL DEFAULT 1;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+          FROM pg_constraint
+         WHERE conname = 'world_events_significance_check'
+    ) THEN
+        ALTER TABLE world_events
+            ADD CONSTRAINT world_events_significance_check
+            CHECK (significance BETWEEN 1 AND 5);
+    END IF;
+END $$;
 
 -- World clock: single-row table holding global game time. Advanced by the
 -- scheduler each tick so all systems agree on "now" without consulting the
@@ -244,7 +304,13 @@ CREATE INDEX IF NOT EXISTS idx_entity_houses_house ON entity_houses(house_id);
 CREATE INDEX IF NOT EXISTS idx_factions_kind ON factions(kind);
 CREATE INDEX IF NOT EXISTS idx_relationships_subject ON relationships(subject_entity_id);
 CREATE INDEX IF NOT EXISTS idx_relationships_target ON relationships(target_entity_id);
+CREATE INDEX IF NOT EXISTS idx_relationship_terms_pair
+    ON relationship_terms(subject_entity_id, target_entity_id);
+CREATE INDEX IF NOT EXISTS idx_relationship_terms_source
+    ON relationship_terms(source_type, source_key);
 CREATE INDEX IF NOT EXISTS idx_world_events_region_time
     ON world_events(region_id, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_regions_due
     ON regions(last_tick_at NULLS FIRST) WHERE paused = FALSE;
+CREATE INDEX IF NOT EXISTS idx_regions_parent
+    ON regions(parent_id);

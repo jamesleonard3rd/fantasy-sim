@@ -19,7 +19,7 @@ function FactionsView({ refreshKey }: { refreshKey: number }) {
       }}
       getMeta={(f) =>
         `${f.member_count} members · ${f.child_count} children${
-          f.is_school ? " · runs a school" : ""
+          f.kind === "school" ? " · runs a school" : ""
         }${f.is_house ? " · noble house" : ""}`
       }
       searchPlaceholder="Search factions…"

@@ -6,7 +6,7 @@ Usage:
     python -m rts_world.sim.runner once    --region-name "Whisperwood"
     python -m rts_world.sim.runner forever
     python -m rts_world.sim.runner status
-    python -m rts_world.sim.runner seed-regions [--reset] [--regions N] [--max-per-region N]
+    python -m rts_world.sim.runner seed-regions [--reset] [--regions N]
 
 The shim ``backend/scripts/sim.py`` re-exports ``main()`` for convenience so
 you can also invoke it as ``python backend/scripts/sim.py ...`` without
@@ -19,6 +19,7 @@ import logging
 import sys
 from typing import Sequence
 
+from ..db.seed import REGIONS_FILE, load_region_templates
 from ..db.db import get_connection
 from . import regions as regions_repo
 from .scheduler import Scheduler
@@ -70,9 +71,11 @@ def cmd_status(_args: argparse.Namespace) -> int:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, name, kind, tick_interval_seconds, last_tick_at, paused,
+                SELECT r.id, r.name, r.type, p.name AS parent_name,
+                       r.tick_interval_seconds, r.last_tick_at, r.paused,
                        (SELECT COUNT(*) FROM entity_zones z WHERE z.region_id = r.id) AS entity_count
                   FROM regions r
+                  LEFT JOIN regions p ON p.id = r.parent_id
                  ORDER BY id
                 """
             )
@@ -84,12 +87,15 @@ def cmd_status(_args: argparse.Namespace) -> int:
         print("no regions defined. run `seed-regions` to create some.")
         return 0
 
-    print(f"{'id':>3}  {'name':<24}  {'kind':<10}  "
-          f"{'tick_s':>6}  {'paused':>6}  {'ents':>5}  last_tick_at")
+    print(
+        f"{'id':>3}  {'name':<24}  {'type':<10}  {'parent':<24}  "
+        f"{'tick_s':>6}  {'paused':>6}  {'ents':>5}  last_tick_at"
+    )
     for r in rows:
-        rid, name, kind, tick_s, last_tick_at, paused, ent_count = r
+        rid, name, region_type, parent_name, tick_s, last_tick_at, paused, ent_count = r
         print(
-            f"{rid:>3}  {str(name):<24}  {str(kind):<10}  "
+            f"{rid:>3}  {str(name):<24}  {str(region_type):<10}  "
+            f"{str(parent_name or '-'):<24}  "
             f"{int(tick_s):>6}  {'Y' if paused else 'N':>6}  "
             f"{int(ent_count):>5}  {last_tick_at}"
         )
@@ -99,28 +105,67 @@ def cmd_status(_args: argparse.Namespace) -> int:
 
 
 def cmd_seed_regions(args: argparse.Namespace) -> int:
-    """Create a few regions and round-robin existing entities into them.
+    """Load region definitions from ``game_data/regions/templates.json`` and
+    assign entities without a ``region_id`` across those regions.
 
-    Idempotent: re-running upserts the regions and fills any entity that
-    doesn't already have a region_id. Pass ``--reset`` to re-assign every
-    entity (useful for shuffling the demo world).
+    Idempotent: re-running upserts regions from templates and fills any entity that
+    doesn't already have a region_id. Pass ``--reset`` to clear assignments for
+    regions that appear in the template file, then re-assign.
     """
-    seed_names: Sequence[tuple[str, str, int]] = (
-        ("Whisperwood",     "wilderness", 180),
-        ("Ironwatch Hold",  "city",       180),
-        ("Mire of Ash",     "wilderness", 240),
-    )[: args.regions]
+    templates = load_region_templates()
+    if not templates:
+        print(f"no region templates in {REGIONS_FILE}")
+        raise SystemExit(1)
 
-    if not seed_names:
-        raise SystemExit("--regions must be >= 1")
+    if args.regions is not None:
+        n = max(0, int(args.regions))
+        templates = templates[:n]
+    if not templates:
+        print("--regions reduced selection to empty")
+        raise SystemExit(1)
 
     with get_connection() as conn:
         region_ids: list[int] = []
-        for name, kind, tick_s in seed_names:
+        name_to_id: dict[str, int] = {}
+        for t in templates:
             rid = regions_repo.upsert_region(
-                conn, name=name, kind=kind, tick_interval_seconds=tick_s
+                conn,
+                name=str(t["name"]),
+                region_type=str(t.get("type", t.get("kind", "region"))),
+                parent_id=None,
+                tick_interval_seconds=int(t.get("tick_interval_seconds", 180)),
+                paused=bool(t.get("paused", False)),
             )
             region_ids.append(rid)
+            name_to_id[str(t["name"])] = rid
+
+        for t in templates:
+            parent_name = t.get("parent")
+            if not parent_name:
+                continue
+            parent_id = name_to_id.get(str(parent_name))
+            if parent_id is None:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT id FROM regions WHERE name = %s",
+                        (str(parent_name),),
+                    )
+                    row = cur.fetchone()
+                    parent_id = int(row[0]) if row else None
+            if parent_id is None:
+                print(
+                    f"warning: region {t['name']!r} "
+                    f"references unknown parent {parent_name!r}"
+                )
+                continue
+            regions_repo.upsert_region(
+                conn,
+                name=str(t["name"]),
+                region_type=str(t.get("type", t.get("kind", "region"))),
+                parent_id=parent_id,
+                tick_interval_seconds=int(t.get("tick_interval_seconds", 180)),
+                paused=bool(t.get("paused", False)),
+            )
 
         with conn.cursor() as cur:
             if args.reset:
@@ -142,13 +187,11 @@ def cmd_seed_regions(args: argparse.Namespace) -> int:
 
         cap = args.max_per_region
         per_region: dict[int, int] = {rid: 0 for rid in region_ids}
-        # Pre-compute id -> name so we can stamp the legacy entity_zones.zone column.
         id_to_name: dict[int, str] = {
-            rid: name for (name, _, _), rid in zip(seed_names, region_ids)
+            rid: str(t["name"]) for t, rid in zip(templates, region_ids)
         }
         assigned = 0
         for entity_id in unassigned:
-            # Pick the least-loaded region, respecting cap.
             candidates = [rid for rid in region_ids if per_region[rid] < cap]
             if not candidates:
                 break
@@ -162,8 +205,10 @@ def cmd_seed_regions(args: argparse.Namespace) -> int:
         conn.commit()
 
     print(f"upserted {len(region_ids)} regions, assigned {assigned} entities:")
-    for (name, _, _), rid in zip(seed_names, region_ids):
-        print(f"  region_id={rid:<3} name={name!r:<26} entities_assigned={per_region[rid]}")
+    for t, rid in zip(templates, region_ids):
+        print(
+            f"  region_id={rid:<3} name={t['name']!r:<26} entities_assigned={per_region[rid]}"
+        )
     return 0
 
 
@@ -189,7 +234,12 @@ def build_parser() -> argparse.ArgumentParser:
         "seed-regions",
         help="Create demo regions and assign existing entities to them.",
     )
-    seed.add_argument("--regions", type=int, default=3, help="How many demo regions (1-3).")
+    seed.add_argument(
+        "--regions",
+        type=int,
+        default=None,
+        help="Use only the first N entries from templates.json; default is all.",
+    )
     seed.add_argument(
         "--max-per-region", type=int, default=300,
         help="Cap on entities per region (roadmap §2 hard cap).",

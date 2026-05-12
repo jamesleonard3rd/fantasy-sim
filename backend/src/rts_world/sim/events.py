@@ -27,6 +27,7 @@ def bulk_insert_events(
         (
             region_id,
             ev.kind,
+            ev.significance,
             ev.subject_entity_id,
             ev.target_entity_id,
             json.dumps(ev.payload) if ev.payload is not None else None,
@@ -40,8 +41,8 @@ def bulk_insert_events(
         cur.executemany(
             """
             INSERT INTO world_events (
-                region_id, kind, subject_entity_id, target_entity_id, payload
-            ) VALUES (%s, %s, %s, %s, %s::jsonb)
+                region_id, kind, significance, subject_entity_id, target_entity_id, payload
+            ) VALUES (%s, %s, %s, %s, %s, %s::jsonb)
             """,
             rows,
         )

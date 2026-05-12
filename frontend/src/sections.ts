@@ -4,13 +4,15 @@ export type SectionId =
   | "houses"
   | "factions"
   | "schools"
+  | "regions"
   | "items"
   | "abilities"
   | "traits"
   | "races"
-  | "towns";
+  | "towns"
+  | "settings";
 
-export type GroupId = "overview" | "characters" | "catalog" | "world";
+export type GroupId = "overview" | "characters" | "catalog" | "world" | "settings";
 
 export type Section = {
   id: SectionId;
@@ -29,6 +31,7 @@ export const GROUPS: Group[] = [
   { id: "characters", label: "Court" },
   { id: "catalog", label: "Codex" },
   { id: "world", label: "Realm" },
+  { id: "settings", label: "Settings" },
 ];
 
 export const SECTIONS: Section[] = [
@@ -44,7 +47,10 @@ export const SECTIONS: Section[] = [
   { id: "traits", label: "Traits", group: "catalog", status: "live" },
   { id: "races", label: "Races", group: "catalog", status: "live" },
 
+  { id: "regions", label: "Regions", group: "world", status: "live" },
   { id: "towns", label: "Towns", group: "world", status: "planned" },
+
+  { id: "settings", label: "Game Settings", group: "settings", status: "live" },
 ];
 
 export function sectionsForGroup(groupId: GroupId): Section[] {

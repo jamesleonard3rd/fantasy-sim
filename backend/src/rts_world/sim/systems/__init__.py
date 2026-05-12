@@ -8,7 +8,9 @@ it in ``default_systems()``". Systems must:
     * mutate ``state`` in place AND mark dirty rows on it;
     * emit ``PendingEvent`` rows by *returning* them, never by writing to the DB.
 
-The DB is the orchestrator's problem.
+The DB is the orchestrator's problem. Systems should not import services or
+repositories; those layers belong at API/script/orchestration edges and in the
+region writeback path.
 """
 from __future__ import annotations
 
@@ -29,5 +31,6 @@ def default_systems() -> Sequence[System]:
     here and inserting it in dependency order.
     """
     from .heartbeat import heartbeat  # local import keeps package import cheap
+    from .relationships import relationship_dynamics
 
-    return (heartbeat,)
+    return (relationship_dynamics, heartbeat)
