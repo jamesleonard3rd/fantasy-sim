@@ -2,12 +2,21 @@ import type { RegionDetail, RegionSummary } from "../types";
 import { MasterDetail } from "./MasterDetail";
 import { Field, Section, Tag, formatDate } from "./common";
 
-function RegionsView({ refreshKey }: { refreshKey: number }) {
+const REGION_REFRESH_MS_RUNNING = 3000;
+
+function RegionsView({
+  refreshKey,
+  simRunning,
+}: {
+  refreshKey: number;
+  simRunning: boolean | null;
+}) {
   return (
     <MasterDetail<RegionSummary, RegionDetail>
       key={refreshKey}
       listEndpoint="/regions"
       detailEndpoint={(id) => `/regions/${id}`}
+      refreshIntervalMs={simRunning === true ? REGION_REFRESH_MS_RUNNING : undefined}
       getId={(r) => r.id}
       getTitle={(r) => r.name}
       getSubtitle={(r) => {
@@ -15,7 +24,7 @@ function RegionsView({ refreshKey }: { refreshKey: number }) {
         return [capitalize(r.type), parentLabel].filter(Boolean).join(" · ");
       }}
       getMeta={(r) =>
-        `${r.total_entity_count} resident${r.total_entity_count === 1 ? "" : "s"} total · ${r.child_count} subregion${r.child_count === 1 ? "" : "s"} · tick every ${r.tick_interval_seconds}s`
+        `${r.total_entity_count} resident${r.total_entity_count === 1 ? "" : "s"} total · ${r.child_count} subregion${r.child_count === 1 ? "" : "s"}`
       }
       searchPlaceholder="Search regions…"
       emptyMessage="No regions yet. Seed game data and run seed-regions."
@@ -55,10 +64,6 @@ function RegionDetailPanel({ region }: { region: RegionDetail }) {
         <Field
           label="Parent"
           value={region.parent_name ?? "—"}
-        />
-        <Field
-          label="Tick interval"
-          value={`${region.tick_interval_seconds} s`}
         />
         <Field
           label="Last tick"

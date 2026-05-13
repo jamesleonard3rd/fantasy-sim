@@ -75,7 +75,7 @@ function renderSection(
     case "schools":
       return <SchoolsView refreshKey={refreshKey} />;
     case "regions":
-      return <RegionsView refreshKey={refreshKey} />;
+      return <RegionsView refreshKey={refreshKey} simRunning={simRunning} />;
     case "items":
       return <ItemsView refreshKey={refreshKey} />;
     case "abilities":

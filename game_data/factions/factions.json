@@ -2,31 +2,37 @@
   "factions": [
     {
       "name": "The White Tower",
+      "kind": "guild",
       "description": "Independent mage tower of the northern reaches.",
       "parent": null
     },
     {
       "name": "The Ember Court",
+      "kind": "generic",
       "description": "Ruling nobility of the southern realm.",
       "parent": null
     },
     {
       "name": "The Flame Keepers",
+      "kind": "order",
       "description": "Elite knights of the Ember Court.",
       "parent": "The Ember Court"
     },
     {
       "name": "The Red Tower",
+      "kind": "guild",
       "description": "Mage tower of the Ember Court.",
       "parent": "The Ember Court"
     },
     {
       "name": "Ember Academy",
+      "kind": "school",
       "description": "Prestigious academy for nobles and the wealthy at the Ember Court, specializing in fire magic.",
       "parent": "The Ember Court"
     },
     {
       "name": "Celestria University",
+      "kind": "school",
       "description": "Most prestigious university for mages on the continent.",
       "parent": null
     }

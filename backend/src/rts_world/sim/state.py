@@ -55,15 +55,27 @@ class RegionState:
     entities: list[dict[str, Any]] = field(default_factory=list)
     relationships: list[dict[str, Any]] = field(default_factory=list)
     relationship_terms: list[dict[str, Any]] = field(default_factory=list)
+    goals: list[dict[str, Any]] = field(default_factory=list)
+    tournaments: list[dict[str, Any]] = field(default_factory=list)
+    tournament_participants: list[dict[str, Any]] = field(default_factory=list)
 
     # Indices that systems can rely on; rebuilt by load_region_state.
     entities_by_id: dict[int, dict[str, Any]] = field(default_factory=dict)
+    goals_by_entity_id: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
+    regions_by_id: dict[int, dict[str, Any]] = field(default_factory=dict)
+    tournaments_by_id: dict[int, dict[str, Any]] = field(default_factory=dict)
+    tournament_participants_by_tournament_id: dict[int, list[dict[str, Any]]] = field(
+        default_factory=dict
+    )
 
     # Mutation tracking. Systems should add ids/keys here when they mutate
     # the corresponding rows so the write path knows what to flush.
     dirty_entity_ids: set[int] = field(default_factory=set)
     dirty_relationship_keys: set[tuple[int, int]] = field(default_factory=set)
     dirty_relationship_term_ids: set[int] = field(default_factory=set)
+    dirty_goal_ids: set[int] = field(default_factory=set)
+    dirty_tournament_ids: set[int] = field(default_factory=set)
+    dirty_tournament_participant_keys: set[tuple[int, int]] = field(default_factory=set)
 
     @property
     def region_id(self) -> int:
@@ -77,6 +89,35 @@ class RegionState:
 
     def mark_relationship_term_dirty(self, term_id: int) -> None:
         self.dirty_relationship_term_ids.add(int(term_id))
+
+    def mark_goal_dirty(self, goal_id: int | None) -> None:
+        if goal_id is not None:
+            self.dirty_goal_ids.add(int(goal_id))
+
+    def add_goal(self, goal: dict[str, Any]) -> None:
+        self.goals.append(goal)
+        entity_id = int(goal["entity_id"])
+        self.goals_by_entity_id.setdefault(entity_id, []).append(goal)
+
+    def mark_tournament_dirty(self, tournament_id: int | None) -> None:
+        if tournament_id is not None:
+            self.dirty_tournament_ids.add(int(tournament_id))
+
+    def mark_tournament_participant_dirty(
+        self, tournament_id: int, entity_id: int
+    ) -> None:
+        self.dirty_tournament_participant_keys.add((int(tournament_id), int(entity_id)))
+
+    def add_tournament(self, tournament: dict[str, Any]) -> None:
+        self.tournaments.append(tournament)
+        self.tournaments_by_id[int(tournament["id"])] = tournament
+
+    def add_tournament_participant(self, participant: dict[str, Any]) -> None:
+        self.tournament_participants.append(participant)
+        tournament_id = int(participant["tournament_id"])
+        self.tournament_participants_by_tournament_id.setdefault(
+            tournament_id, []
+        ).append(participant)
 
 
 # ---------- per-tick context shared by all systems ----------

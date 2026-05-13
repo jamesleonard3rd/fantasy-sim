@@ -13,6 +13,7 @@ the same DB are isolated by a unique region name per process.
 """
 from __future__ import annotations
 
+import json
 import os
 import uuid
 from datetime import datetime, timezone
@@ -130,3 +131,253 @@ def test_load_region_state_returns_none_for_unknown(db_conn):
 
     state = load_region_state(db_conn, region_id=-12345)
     assert state is None
+
+
+def test_tick_region_executes_persisted_travel_goal(db_conn, isolated_region):
+    from rts_world.sim.tick import tick_region
+
+    source_region_id = int(isolated_region["id"])
+    target_name = f"__test_target_region_{os.getpid()}_{uuid.uuid4().hex[:8]}"
+    race_name = f"__test_race_{os.getpid()}_{uuid.uuid4().hex[:8]}"
+    entity_id: int | None = None
+    target_region_id: int | None = None
+    race_id: int | None = None
+
+    try:
+        with db_conn.cursor() as cur:
+            cur.execute("SELECT to_regclass('public.entity_goals')")
+            table_row = cur.fetchone()
+            if table_row is None or table_row[0] is None:
+                pytest.skip("entity_goals table is not present; apply schema.sql")
+
+            cur.execute("INSERT INTO races (name) VALUES (%s) RETURNING id", (race_name,))
+            race_row = cur.fetchone()
+            assert race_row is not None
+            race_id = int(race_row[0])
+
+            cur.execute(
+                """
+                INSERT INTO regions (name, type, tick_interval_seconds)
+                VALUES (%s, 'region', 180)
+                RETURNING id
+                """,
+                (target_name,),
+            )
+            target_row = cur.fetchone()
+            assert target_row is not None
+            target_region_id = int(target_row[0])
+
+            cur.execute(
+                """
+                INSERT INTO entities (name, type, race_id)
+                VALUES ('Goal Tester', 'humanoid', %s)
+                RETURNING id
+                """,
+                (race_id,),
+            )
+            entity_row = cur.fetchone()
+            assert entity_row is not None
+            entity_id = int(entity_row[0])
+
+            cur.execute(
+                """
+                INSERT INTO entity_zones (entity_id, zone, region_id)
+                VALUES (%s, %s, %s)
+                """,
+                (entity_id, isolated_region["name"], source_region_id),
+            )
+            cur.execute(
+                """
+                INSERT INTO entity_goals (
+                    entity_id, goal_type, priority, urgency, payload
+                ) VALUES (
+                    %s, 'travel_to_region', 4, 0, %s::jsonb
+                )
+                RETURNING id
+                """,
+                (entity_id, f'{{"region_id": {target_region_id}, "duration_ticks": 1}}'),
+            )
+            goal_row = cur.fetchone()
+            assert goal_row is not None
+            goal_id = int(goal_row[0])
+        db_conn.commit()
+
+        result = tick_region(source_region_id)
+
+        assert not result.skipped
+        with db_conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT status, active, progress, completed_at_game_tick
+                  FROM entity_goals
+                 WHERE id = %s
+                """,
+                (goal_id,),
+            )
+            goal_state = cur.fetchone()
+            assert goal_state is not None
+            assert goal_state[0] == "completed"
+            assert goal_state[1] is False
+            assert int(goal_state[2]) == 100
+            assert goal_state[3] is not None
+
+            cur.execute(
+                "SELECT region_id FROM entity_zones WHERE entity_id = %s",
+                (entity_id,),
+            )
+            zone_row = cur.fetchone()
+            assert zone_row is not None
+            assert int(zone_row[0]) == target_region_id
+
+            cur.execute(
+                """
+                SELECT kind
+                  FROM world_events
+                 WHERE region_id = %s AND subject_entity_id = %s
+                 ORDER BY id
+                """,
+                (source_region_id, entity_id),
+            )
+            kinds = [row[0] for row in cur.fetchall()]
+            assert "goal.activated" in kinds
+            assert "goal.completed" in kinds
+    finally:
+        db_conn.rollback()
+        with db_conn.cursor() as cur:
+            if entity_id is not None:
+                cur.execute("DELETE FROM world_events WHERE subject_entity_id = %s", (entity_id,))
+                cur.execute("DELETE FROM entities WHERE id = %s", (entity_id,))
+            if target_region_id is not None:
+                cur.execute("DELETE FROM world_events WHERE region_id = %s", (target_region_id,))
+                cur.execute("DELETE FROM regions WHERE id = %s", (target_region_id,))
+            if race_id is not None:
+                cur.execute("DELETE FROM races WHERE id = %s", (race_id,))
+        db_conn.commit()
+
+
+def test_tick_region_executes_persisted_tournament(db_conn, isolated_region):
+    from rts_world.sim.tick import tick_region
+
+    region_id = int(isolated_region["id"])
+    race_name = f"__test_tournament_race_{os.getpid()}_{uuid.uuid4().hex[:8]}"
+    race_id: int | None = None
+    entity_ids: list[int] = []
+    tournament_id: int | None = None
+
+    try:
+        with db_conn.cursor() as cur:
+            cur.execute("SELECT to_regclass('public.tournament_instances')")
+            table_row = cur.fetchone()
+            if table_row is None or table_row[0] is None:
+                pytest.skip("tournament tables are not present; apply schema.sql")
+
+            cur.execute("INSERT INTO races (name) VALUES (%s) RETURNING id", (race_name,))
+            race_row = cur.fetchone()
+            assert race_row is not None
+            race_id = int(race_row[0])
+
+            for index in range(4):
+                cur.execute(
+                    """
+                    INSERT INTO entities (name, type, race_id)
+                    VALUES (%s, 'humanoid', %s)
+                    RETURNING id
+                    """,
+                    (f"Tournament Tester {index}", race_id),
+                )
+                entity_row = cur.fetchone()
+                assert entity_row is not None
+                entity_id = int(entity_row[0])
+                entity_ids.append(entity_id)
+                cur.execute(
+                    """
+                    INSERT INTO entity_zones (entity_id, zone, region_id)
+                    VALUES (%s, %s, %s)
+                    """,
+                    (entity_id, isolated_region["name"], region_id),
+                )
+
+            cur.execute(
+                """
+                INSERT INTO tournament_instances (
+                    region_id, name, status, starts_at_game_tick,
+                    current_round, max_rounds_per_tick, payload
+                ) VALUES (
+                    %s, 'Integration Cup', 'registration_closed', 0,
+                    0, 10, %s::jsonb
+                )
+                RETURNING id
+                """,
+                (region_id, json.dumps({"min_participants": 2})),
+            )
+            tournament_row = cur.fetchone()
+            assert tournament_row is not None
+            tournament_id = int(tournament_row[0])
+
+            for seed, entity_id in enumerate(entity_ids, start=1):
+                cur.execute(
+                    """
+                    INSERT INTO tournament_participants (
+                        tournament_id, entity_id, status, seed, joined_at_game_tick
+                    ) VALUES (%s, %s, 'registered', %s, 0)
+                    """,
+                    (tournament_id, entity_id, seed),
+                )
+        db_conn.commit()
+
+        result = tick_region(region_id)
+
+        assert not result.skipped
+        with db_conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT status, winner_entity_id, current_round, completed_at_game_tick
+                  FROM tournament_instances
+                 WHERE id = %s
+                """,
+                (tournament_id,),
+            )
+            tournament_row = cur.fetchone()
+            assert tournament_row is not None
+            assert tournament_row[0] == "completed"
+            assert int(tournament_row[1]) == entity_ids[0]
+            assert int(tournament_row[2]) == 2
+            assert tournament_row[3] is not None
+
+            cur.execute(
+                """
+                SELECT status, COUNT(*)
+                  FROM tournament_participants
+                 WHERE tournament_id = %s
+                 GROUP BY status
+                """,
+                (tournament_id,),
+            )
+            statuses = {row[0]: int(row[1]) for row in cur.fetchall()}
+            assert statuses == {"winner": 1, "eliminated": 3}
+
+            cur.execute(
+                """
+                SELECT kind
+                  FROM world_events
+                 WHERE region_id = %s
+                 ORDER BY id
+                """,
+                (region_id,),
+            )
+            kinds = [row[0] for row in cur.fetchall()]
+            assert "tournament.started" in kinds
+            assert "tournament.winner_declared" in kinds
+    finally:
+        db_conn.rollback()
+        with db_conn.cursor() as cur:
+            if tournament_id is not None:
+                cur.execute(
+                    "DELETE FROM tournament_instances WHERE id = %s",
+                    (tournament_id,),
+                )
+            if entity_ids:
+                cur.execute("DELETE FROM entities WHERE id = ANY(%s)", (entity_ids,))
+            if race_id is not None:
+                cur.execute("DELETE FROM races WHERE id = %s", (race_id,))
+        db_conn.commit()

@@ -1,9 +1,11 @@
 """World clock: shared in-game time used by every system.
 
-Single-row table ``world_clock``. The scheduler bumps ``game_tick`` (and
-``game_day`` when it rolls over) once per region tick. Systems read game
-time from here rather than ``datetime.now()`` so behaviour is deterministic
-in tests.
+Single-row table ``world_clock``. Each successful region tick commits an
+``advance_clock`` that maps wall time since ``updated_at`` into in-game minutes.
+
+Day length is configured by ``game_data/config/game_settings.json``:
+``simulation.day_length_multiplier`` scales the base rate of **20 real minutes
+per full in-game day** (multiplier > 1 stretches a realm day in real time).
 
 Only this module is allowed to write ``world_clock``.
 """
@@ -13,11 +15,46 @@ from dataclasses import dataclass
 
 import psycopg
 
+from ..config import get_game_settings
 
-# The visible sim clock is a normal 24-hour day. One real-world minute equals
-# one full in-game day, so one real-world second advances the clock 24 minutes.
+# One realm day is always 24 × 60 in-world minutes; ``game_tick`` is minute-of-day.
 GAME_MINUTES_PER_DAY: int = 24 * 60
-GAME_MINUTES_PER_REAL_SECOND: int = 24
+
+# Default when settings omit the key: 20 real minutes per game day, multiplier 1.
+_BASE_REAL_MINUTES_PER_GAME_DAY: float = 20.0
+
+# API sim loop: region ticks per full in-game day scales with ``day_length_multiplier``.
+BASE_TICKS_PER_GAME_DAY: int = 5
+
+
+def day_length_multiplier() -> float:
+    """``simulation.day_length_multiplier`` from game settings, clamped to positive."""
+    sim = get_game_settings().get("simulation") or {}
+    mult = float(sim.get("day_length_multiplier", 1.0))
+    if mult <= 0:
+        mult = 1.0
+    return mult
+
+
+def real_seconds_per_game_day() -> float:
+    """Wall-clock seconds that span one full in-game day (24h realm time)."""
+    return _BASE_REAL_MINUTES_PER_GAME_DAY * 60.0 * day_length_multiplier()
+
+
+def ticks_per_game_day() -> int:
+    """How many region ticks to schedule per full in-game day (longer days => more ticks)."""
+    return max(1, round(BASE_TICKS_PER_GAME_DAY * day_length_multiplier()))
+
+
+def region_tick_interval_seconds() -> float:
+    """Wall seconds between API sim region tick attempts for the current settings."""
+    n = ticks_per_game_day()
+    return real_seconds_per_game_day() / float(n)
+
+
+def game_minutes_per_real_second() -> float:
+    """How many in-game minutes advance per one real-time second."""
+    return float(GAME_MINUTES_PER_DAY) / real_seconds_per_game_day()
 
 
 @dataclass(frozen=True)
@@ -74,7 +111,7 @@ def advance_clock(conn: psycopg.Connection) -> WorldClock:
             RETURNING game_day, game_tick
             """,
             (
-                GAME_MINUTES_PER_REAL_SECOND,
+                game_minutes_per_real_second(),
                 GAME_MINUTES_PER_DAY,
                 GAME_MINUTES_PER_DAY,
                 GAME_MINUTES_PER_DAY,

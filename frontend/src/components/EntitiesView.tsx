@@ -4,8 +4,10 @@ import { apiDelete, apiGet, apiPost, apiPut } from "../api";
 import type {
   Ability,
   EntityDetail,
+  EntityGoal,
   EntitySummary,
   FactionSummary,
+  GoalTemplateSummary,
   Item,
   RegionSummary,
   Trait,
@@ -43,6 +45,7 @@ type LookupData = {
   items: Item[];
   abilities: Ability[];
   regions: RegionSummary[];
+  goalTemplates: GoalTemplateSummary[];
 };
 
 function EntityDetailPanel({ entity }: { entity: EntityDetail }) {
@@ -58,6 +61,8 @@ function EntityDetailPanel({ entity }: { entity: EntityDetail }) {
   const [itemQuantity, setItemQuantity] = useState(1);
   const [selectedAbilityId, setSelectedAbilityId] = useState("");
   const [selectedRegionId, setSelectedRegionId] = useState("");
+  const [selectedGoalType, setSelectedGoalType] = useState("");
+  const [goalPayloadJson, setGoalPayloadJson] = useState("{}");
 
   useEffect(() => {
     setCurrent(entity);
@@ -73,10 +78,11 @@ function EntityDetailPanel({ entity }: { entity: EntityDetail }) {
       apiGet<Item[]>("/items"),
       apiGet<Ability[]>("/abilities"),
       apiGet<RegionSummary[]>("/regions"),
+      apiGet<GoalTemplateSummary[]>("/goal-templates").catch(() => []),
     ])
-      .then(([traits, factions, items, abilities, regions]) => {
+      .then(([traits, factions, items, abilities, regions, goalTemplates]) => {
         if (!cancelled) {
-          setLookups({ traits, factions, items, abilities, regions });
+          setLookups({ traits, factions, items, abilities, regions, goalTemplates });
         }
       })
       .catch((err: Error) => {
@@ -126,6 +132,20 @@ function EntityDetailPanel({ entity }: { entity: EntityDetail }) {
       (faction) => faction.kind === "school" && !existing.has(faction.id),
     );
   }, [current.factions, lookups]);
+
+  const goals = current.goals ?? [];
+
+  const availableGoalTemplates = lookups?.goalTemplates ?? [];
+
+  const selectedGoalTemplate = useMemo(
+    () => availableGoalTemplates.find((x) => x.goal_type === selectedGoalType),
+    [availableGoalTemplates, selectedGoalType],
+  );
+
+  const selectedGoalTemplateHint = useMemo(() => {
+    if (!selectedGoalTemplate?.requires?.length) return undefined;
+    return `Requires payload fields: ${selectedGoalTemplate.requires.join(", ")}`;
+  }, [selectedGoalTemplate]);
 
   const runEdit = async (operation: () => Promise<EntityDetail>) => {
     setBusy(true);
@@ -191,6 +211,44 @@ function EntityDetailPanel({ entity }: { entity: EntityDetail }) {
       }),
     );
     setSelectedAbilityId("");
+  };
+
+  const addGoal = () => {
+    if (!selectedGoalType || !selectedGoalTemplate || !lookups) {
+      setError("Choose a goal template before adding a goal.");
+      return;
+    }
+    const raw = goalPayloadJson.trim();
+    let payload: Record<string, unknown> = {};
+    if (raw) {
+      try {
+        const parsed: unknown = JSON.parse(raw);
+        if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+          setError("Goal payload must be a JSON object.");
+          return;
+        }
+        payload = parsed as Record<string, unknown>;
+      } catch {
+        setError("Goal payload must be valid JSON.");
+        return;
+      }
+    }
+    const missing = selectedGoalTemplate.requires.filter(
+      (field) => payload[field] === undefined || payload[field] === null,
+    );
+    if (missing.length > 0) {
+      setError(`Goal payload is missing: ${missing.join(", ")}.`);
+      return;
+    }
+    void runEdit(() =>
+      apiPost<EntityDetail>(`/entities/${current.id}/goals`, {
+        goal_type: selectedGoalType,
+        payload,
+        completion_mode: selectedGoalTemplate.completion_mode,
+      }),
+    );
+    setSelectedGoalType("");
+    setGoalPayloadJson("{}");
   };
 
   const saveZone = () => {
@@ -315,6 +373,123 @@ function EntityDetailPanel({ entity }: { entity: EntityDetail }) {
           </table>
         </Section>
       )}
+
+      <Section
+        title={`Goals (${goals.length})`}
+        actions={
+          <div className="add-control add-control-goals">
+            <select
+              value={selectedGoalType}
+              onChange={(event) => setSelectedGoalType(event.target.value)}
+              disabled={busy || !lookups || availableGoalTemplates.length === 0}
+              title={selectedGoalTemplateHint}
+            >
+              <option value="">Add goal template…</option>
+              {availableGoalTemplates.map((t) => (
+                <option key={t.goal_type} value={t.goal_type}>
+                  {formatGoalType(t.goal_type)}
+                </option>
+              ))}
+            </select>
+            <textarea
+              className="add-control-payload"
+              rows={1}
+              value={goalPayloadJson}
+              onChange={(event) => setGoalPayloadJson(event.target.value)}
+              disabled={busy || !lookups || availableGoalTemplates.length === 0}
+              placeholder='Payload JSON, e.g. {"faction_id": 1, "target_region_id": 2}'
+              spellCheck={false}
+            />
+            <button
+              type="button"
+              disabled={
+                busy || !lookups || availableGoalTemplates.length === 0 || !selectedGoalType
+              }
+              onClick={addGoal}
+              title="Add goal from template"
+            >
+              +
+            </button>
+          </div>
+        }
+      >
+        {availableGoalTemplates.length === 0 && lookups && (
+          <p className="muted small">
+            No goal templates loaded (is the API running?). You can still remove goals below.
+          </p>
+        )}
+        {selectedGoalTemplateHint && (
+          <p className="muted small">{selectedGoalTemplateHint}</p>
+        )}
+        {goals.length === 0 ? (
+          <span className="muted">No goals assigned.</span>
+        ) : (
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Goal</th>
+                <th>Status</th>
+                <th>Priority</th>
+                <th>Progress</th>
+                <th>Timing</th>
+                <th className="table-actions-heading" />
+              </tr>
+            </thead>
+            <tbody>
+              {goals.map((goal) => {
+                const payloadSummary = formatGoalPayload(goal.payload);
+                return (
+                  <tr key={goal.id}>
+                    <td>
+                      <div>{formatGoalType(goal.goal_type)}</div>
+                      <div className="muted small">
+                        #{goal.id}
+                        {goal.parent_goal_id ? ` · child of #${goal.parent_goal_id}` : ""}
+                        {goal.completion_mode ? ` · ${goal.completion_mode}` : ""}
+                      </div>
+                      {payloadSummary && (
+                        <div className="muted small">{payloadSummary}</div>
+                      )}
+                    </td>
+                    <td>
+                      <Tag tone={goalStatusTone(goal.status)}>
+                        {goal.active ? "active" : goal.status}
+                      </Tag>
+                    </td>
+                    <td>
+                      <div>{goal.priority}</div>
+                      <div className="muted small">Urgency {goal.urgency}</div>
+                    </td>
+                    <td>
+                      <div className="goal-progress">
+                        <progress max={100} value={goal.progress} />
+                        <span>{formatGoalProgress(goal.progress)}</span>
+                      </div>
+                    </td>
+                    <td>{formatGoalTiming(goal)}</td>
+                    <td className="table-actions">
+                      <button
+                        type="button"
+                        disabled={busy}
+                        aria-label={`Remove goal ${goal.goal_type}`}
+                        onClick={() =>
+                          void runEdit(() =>
+                            apiDelete<EntityDetail>(
+                              `/entities/${current.id}/goals/${goal.id}`,
+                            ),
+                          )
+                        }
+                      >
+                        x
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </Section>
 
       <Section
         title={`Traits (${current.traits.length})`}
@@ -679,6 +854,51 @@ function houseRoleTone(role: string): "warning" | "info" | "success" | "neutral"
   if (role === "heir") return "success";
   if (role === "scion") return "info";
   return "neutral";
+}
+
+function goalStatusTone(
+  status: EntityGoal["status"],
+): "success" | "danger" | "warning" | "info" | "neutral" {
+  if (status === "completed") return "success";
+  if (status === "failed" || status === "cancelled") return "danger";
+  if (status === "active") return "warning";
+  if (status === "paused") return "info";
+  return "neutral";
+}
+
+function formatGoalType(value: string): string {
+  return value
+    .replace(/[._-]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function formatGoalProgress(value: number): string {
+  return `${Math.round(value)}%`;
+}
+
+function formatGoalPayload(payload: EntityGoal["payload"]): string {
+  if (!payload) return "";
+  const parts = Object.entries(payload)
+    .filter(([, value]) => value !== null && typeof value !== "object")
+    .slice(0, 3)
+    .map(([key, value]) => `${formatGoalType(key)}: ${String(value)}`);
+  return parts.join(" · ");
+}
+
+function formatGoalTiming(goal: EntityGoal): string {
+  if (goal.completed_at_game_tick !== null) {
+    return `Completed tick ${goal.completed_at_game_tick}`;
+  }
+  if (goal.paused_at_game_tick !== null) {
+    return `Paused tick ${goal.paused_at_game_tick}`;
+  }
+  if (goal.deadline_game_tick !== null) {
+    return `Deadline tick ${goal.deadline_game_tick}`;
+  }
+  if (goal.started_at_game_tick !== null) {
+    return `Started tick ${goal.started_at_game_tick}`;
+  }
+  return "—";
 }
 
 export default EntitiesView;

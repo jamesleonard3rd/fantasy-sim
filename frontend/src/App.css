@@ -794,6 +794,7 @@
 .house-notes-line {
   display: -webkit-box;
   -webkit-line-clamp: 1;
+  line-clamp: 1;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -1200,6 +1201,7 @@
 
 .add-control select,
 .add-control input,
+.add-control textarea,
 .inline-edit-row select {
   background: var(--bg-input);
   border: 1px solid var(--border);
@@ -1218,6 +1220,21 @@
   width: 64px;
 }
 
+.add-control-goals {
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+
+.add-control-payload {
+  min-width: 140px;
+  flex: 1 1 180px;
+  min-height: 32px;
+  resize: vertical;
+  font-family: ui-monospace, "Cascadia Code", monospace;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .inline-edit-value {
   padding: 0;
   border: none;
@@ -1233,6 +1250,36 @@
   flex-wrap: wrap;
   gap: 6px;
   align-items: center;
+}
+
+.goal-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 120px;
+}
+
+.goal-progress progress {
+  width: 76px;
+  height: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(8, 12, 28, 0.85);
+}
+
+.goal-progress progress::-webkit-progress-bar {
+  background: rgba(8, 12, 28, 0.85);
+}
+
+.goal-progress progress::-webkit-progress-value {
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--violet), var(--cyan));
+}
+
+.goal-progress progress::-moz-progress-bar {
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--violet), var(--cyan));
 }
 
 .table-actions {

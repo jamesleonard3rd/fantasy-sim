@@ -17,11 +17,6 @@ type Props = {
   clockRefreshKey: number;
 };
 
-const TICK_SETTINGS = {
-  min_interval_seconds: 15,
-  max_interval_seconds: 30,
-};
-
 /** While sim runs, clock is extrapolated on the server from last tick. When stopped, no polling — time is static; refetch on mount and when toggling start/stop. */
 const CLOCK_POLL_MS_RUNNING = 1000;
 
@@ -82,7 +77,7 @@ function TopBar({
     try {
       const status = simRunning
         ? await apiPost<SimStatus>("/sim/stop")
-        : await apiPost<SimStatus>("/sim/start", TICK_SETTINGS);
+        : await apiPost<SimStatus>("/sim/start");
       simRunningRef.current = status.running;
       onSimRunningChange(status.running);
       refreshClock();

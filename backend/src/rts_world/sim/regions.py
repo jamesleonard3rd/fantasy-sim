@@ -146,11 +146,94 @@ def load_region_state(conn: psycopg.Connection, region_id: int) -> RegionState |
     state = RegionState(region=region)
 
     with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, name, type, parent_id
+              FROM regions
+             ORDER BY id
+            """
+        )
+        for row in cur.fetchall():
+            state.regions_by_id[int(row[0])] = {
+                "id": int(row[0]),
+                "name": row[1],
+                "type": row[2],
+                "parent_id": int(row[3]) if row[3] is not None else None,
+            }
+
+        cur.execute("SELECT to_regclass('public.tournament_instances')")
+        tournament_table = cur.fetchone()
+        if tournament_table is not None and tournament_table[0] is not None:
+            cur.execute(
+                """
+                SELECT id, region_id, name, status,
+                       registration_opens_at_game_tick,
+                       registration_closes_at_game_tick,
+                       starts_at_game_tick, current_round, max_rounds_per_tick,
+                       winner_entity_id, payload, created_at, updated_at,
+                       completed_at_game_tick
+                  FROM tournament_instances
+                 WHERE region_id = %s
+                   AND status NOT IN ('completed', 'cancelled')
+                 ORDER BY starts_at_game_tick, id
+                """,
+                (region_id,),
+            )
+            for row in cur.fetchall():
+                tournament = {
+                    "id": int(row[0]),
+                    "region_id": int(row[1]),
+                    "name": row[2],
+                    "status": row[3],
+                    "registration_opens_at_game_tick": (
+                        int(row[4]) if row[4] is not None else None
+                    ),
+                    "registration_closes_at_game_tick": (
+                        int(row[5]) if row[5] is not None else None
+                    ),
+                    "starts_at_game_tick": int(row[6]),
+                    "current_round": int(row[7]),
+                    "max_rounds_per_tick": int(row[8]),
+                    "winner_entity_id": int(row[9]) if row[9] is not None else None,
+                    "payload": row[10] or {},
+                    "created_at": row[11],
+                    "updated_at": row[12],
+                    "completed_at_game_tick": int(row[13]) if row[13] is not None else None,
+                }
+                state.add_tournament(tournament)
+
+            if state.tournaments_by_id:
+                tournament_ids = tuple(state.tournaments_by_id.keys())
+                cur.execute(
+                    """
+                    SELECT tournament_id, entity_id, status, seed,
+                           eliminated_round, joined_at_game_tick, payload,
+                           updated_at
+                      FROM tournament_participants
+                     WHERE tournament_id = ANY(%s)
+                     ORDER BY tournament_id, seed NULLS LAST, entity_id
+                    """,
+                    (list(tournament_ids),),
+                )
+                for row in cur.fetchall():
+                    participant = {
+                        "tournament_id": int(row[0]),
+                        "entity_id": int(row[1]),
+                        "status": row[2],
+                        "seed": int(row[3]) if row[3] is not None else None,
+                        "eliminated_round": int(row[4]) if row[4] is not None else None,
+                        "joined_at_game_tick": int(row[5]) if row[5] is not None else None,
+                        "payload": row[6] or {},
+                        "updated_at": row[7],
+                    }
+                    state.add_tournament_participant(participant)
+
         # Entities currently zoned to this region. The wide SELECT pattern: one
         # round-trip, no per-entity follow-ups.
         cur.execute(
             """
-            SELECT e.id, e.name, e.type, e.race_id, e.subrace_id, e.created_at
+            SELECT e.id, e.name, e.type, e.race_id, e.subrace_id, e.created_at,
+                   z.zone, z.region_id
               FROM entities e
               JOIN entity_zones z ON z.entity_id = e.id
              WHERE z.region_id = %s
@@ -166,15 +249,55 @@ def load_region_state(conn: psycopg.Connection, region_id: int) -> RegionState |
                 "race_id": int(row[3]),
                 "subrace_id": int(row[4]) if row[4] is not None else None,
                 "created_at": row[5],
+                "zone": row[6],
+                "region_id": int(row[7]) if row[7] is not None else None,
             }
             state.entities.append(ent)
             state.entities_by_id[int(row[0])] = ent
 
-        # Relationships among entities currently in this region. We deliberately
-        # only load rows where BOTH endpoints are in-region; cross-region
-        # relationships are a separate concern (faction politics handles that).
         if state.entities_by_id:
             ids = tuple(state.entities_by_id.keys())
+            cur.execute(
+                """
+                SELECT id, entity_id, parent_goal_id, goal_type, status,
+                       priority, urgency, deadline_game_tick, interruptible,
+                       completion_mode, active, progress, cost, danger,
+                       payload, created_at, updated_at, started_at_game_tick,
+                       paused_at_game_tick, completed_at_game_tick
+                  FROM entity_goals
+                 WHERE entity_id = ANY(%s)
+                 ORDER BY entity_id, parent_goal_id NULLS FIRST, id
+                """,
+                (list(ids),),
+            )
+            for row in cur.fetchall():
+                goal = {
+                    "id": int(row[0]),
+                    "entity_id": int(row[1]),
+                    "parent_goal_id": int(row[2]) if row[2] is not None else None,
+                    "goal_type": row[3],
+                    "status": row[4],
+                    "priority": int(row[5]),
+                    "urgency": int(row[6]),
+                    "deadline_game_tick": int(row[7]) if row[7] is not None else None,
+                    "interruptible": bool(row[8]),
+                    "completion_mode": row[9],
+                    "active": bool(row[10]),
+                    "progress": float(row[11]),
+                    "cost": float(row[12]),
+                    "danger": float(row[13]),
+                    "payload": row[14] or {},
+                    "created_at": row[15],
+                    "updated_at": row[16],
+                    "started_at_game_tick": int(row[17]) if row[17] is not None else None,
+                    "paused_at_game_tick": int(row[18]) if row[18] is not None else None,
+                    "completed_at_game_tick": int(row[19]) if row[19] is not None else None,
+                }
+                state.add_goal(goal)
+
+            # Relationships among entities currently in this region. We deliberately
+            # only load rows where BOTH endpoints are in-region; cross-region
+            # relationships are a separate concern (faction politics handles that).
             cur.execute(
                 """
                 SELECT subject_entity_id, target_entity_id, opinion, last_updated
@@ -242,6 +365,10 @@ def write_region_state(
     """
     summary = {
         "entities_updated": 0,
+        "goals_inserted": 0,
+        "goals_updated": 0,
+        "tournaments_updated": 0,
+        "tournament_participants_updated": 0,
         "relationships_updated": 0,
         "relationship_terms_updated": 0,
         "events_inserted": 0,
@@ -313,14 +440,228 @@ def write_region_state(
                 )
             summary["relationships_updated"] = len(rows)
 
-    # Entities: nothing to flush yet at the MVP level (no mutable columns
-    # touched by current systems). Reserved hook for needs/goals once those
-    # land and add per-entity scalar columns.
+    # Goals: flush dirty existing rows before inserting new rows so an old active
+    # goal can be paused before a newly-created child becomes active.
+    if state.dirty_goal_ids:
+        by_id = {
+            int(goal["id"]): goal
+            for goal in state.goals
+            if goal.get("id") is not None
+        }
+        rows = []
+        for goal_id in state.dirty_goal_ids:
+            goal = by_id.get(goal_id)
+            if goal is None:
+                continue
+            rows.append(
+                (
+                    goal.get("parent_goal_id"),
+                    goal["goal_type"],
+                    goal.get("status", "pending"),
+                    int(goal.get("priority", 3)),
+                    int(goal.get("urgency", 0)),
+                    goal.get("deadline_game_tick"),
+                    bool(goal.get("interruptible", True)),
+                    goal.get("completion_mode", "ordered"),
+                    bool(goal.get("active", False)),
+                    float(goal.get("progress", 0)),
+                    float(goal.get("cost", 0)),
+                    float(goal.get("danger", 0)),
+                    json.dumps(goal.get("payload") or {}),
+                    goal.get("started_at_game_tick"),
+                    goal.get("paused_at_game_tick"),
+                    goal.get("completed_at_game_tick"),
+                    goal_id,
+                )
+            )
+        if rows:
+            with conn.cursor() as cur:
+                cur.executemany(
+                    """
+                    UPDATE entity_goals
+                       SET parent_goal_id = %s,
+                           goal_type = %s,
+                           status = %s,
+                           priority = %s,
+                           urgency = %s,
+                           deadline_game_tick = %s,
+                           interruptible = %s,
+                           completion_mode = %s,
+                           active = %s,
+                           progress = %s,
+                           cost = %s,
+                           danger = %s,
+                           payload = %s::jsonb,
+                           started_at_game_tick = %s,
+                           paused_at_game_tick = %s,
+                           completed_at_game_tick = %s,
+                           updated_at = NOW()
+                     WHERE id = %s
+                    """,
+                    rows,
+                )
+            summary["goals_updated"] = len(rows)
+
+    new_goal_rows = [
+        (
+            int(goal["entity_id"]),
+            goal.get("parent_goal_id"),
+            goal["goal_type"],
+            goal.get("status", "pending"),
+            int(goal.get("priority", 3)),
+            int(goal.get("urgency", 0)),
+            goal.get("deadline_game_tick"),
+            bool(goal.get("interruptible", True)),
+            goal.get("completion_mode", "ordered"),
+            bool(goal.get("active", False)),
+            float(goal.get("progress", 0)),
+            float(goal.get("cost", 0)),
+            float(goal.get("danger", 0)),
+            json.dumps(goal.get("payload") or {}),
+            goal.get("started_at_game_tick"),
+            goal.get("paused_at_game_tick"),
+            goal.get("completed_at_game_tick"),
+        )
+        for goal in state.goals
+        if goal.get("id") is None
+    ]
+    if new_goal_rows:
+        with conn.cursor() as cur:
+            cur.executemany(
+                """
+                INSERT INTO entity_goals (
+                    entity_id, parent_goal_id, goal_type, status, priority,
+                    urgency, deadline_game_tick, interruptible, completion_mode,
+                    active, progress, cost, danger, payload,
+                    started_at_game_tick, paused_at_game_tick, completed_at_game_tick
+                ) VALUES (
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s::jsonb,
+                    %s, %s, %s
+                )
+                """,
+                new_goal_rows,
+            )
+        summary["goals_inserted"] = len(new_goal_rows)
+
+    # Entities: mutable simulation state currently lives in component tables.
+    # Goal execution uses this path to move an entity between regions.
     if state.dirty_entity_ids:
-        # Placeholder: future systems will UPDATE entities here in one
-        # executemany. For now this branch is unreachable because no MVP
-        # system marks entities dirty.
-        pass
+        rows = []
+        for entity_id in state.dirty_entity_ids:
+            entity = state.entities_by_id.get(entity_id)
+            if entity is None:
+                continue
+            region_id_value = entity.get("region_id")
+            zone = entity.get("zone") or str(state.region["name"])
+            rows.append(
+                (
+                    int(entity_id),
+                    str(zone),
+                    int(region_id_value) if region_id_value is not None else None,
+                )
+            )
+        if rows:
+            with conn.cursor() as cur:
+                cur.executemany(
+                    """
+                    INSERT INTO entity_zones (entity_id, zone, region_id, updated_at)
+                    VALUES (%s, %s, %s, NOW())
+                    ON CONFLICT (entity_id) DO UPDATE
+                        SET zone = EXCLUDED.zone,
+                            region_id = EXCLUDED.region_id,
+                            updated_at = NOW()
+                    """,
+                    rows,
+                )
+            summary["entities_updated"] = len(rows)
+
+    if state.dirty_tournament_ids:
+        by_id = {int(t["id"]): t for t in state.tournaments}
+        rows = []
+        for tournament_id in state.dirty_tournament_ids:
+            tournament = by_id.get(tournament_id)
+            if tournament is None:
+                continue
+            rows.append(
+                (
+                    tournament["name"],
+                    tournament.get("status", "scheduled"),
+                    tournament.get("registration_opens_at_game_tick"),
+                    tournament.get("registration_closes_at_game_tick"),
+                    tournament["starts_at_game_tick"],
+                    int(tournament.get("current_round", 0)),
+                    int(tournament.get("max_rounds_per_tick", 1)),
+                    tournament.get("winner_entity_id"),
+                    json.dumps(tournament.get("payload") or {}),
+                    tournament.get("completed_at_game_tick"),
+                    tournament_id,
+                )
+            )
+        if rows:
+            with conn.cursor() as cur:
+                cur.executemany(
+                    """
+                    UPDATE tournament_instances
+                       SET name = %s,
+                           status = %s,
+                           registration_opens_at_game_tick = %s,
+                           registration_closes_at_game_tick = %s,
+                           starts_at_game_tick = %s,
+                           current_round = %s,
+                           max_rounds_per_tick = %s,
+                           winner_entity_id = %s,
+                           payload = %s::jsonb,
+                           completed_at_game_tick = %s,
+                           updated_at = NOW()
+                     WHERE id = %s
+                    """,
+                    rows,
+                )
+            summary["tournaments_updated"] = len(rows)
+
+    if state.dirty_tournament_participant_keys:
+        by_key = {
+            (int(p["tournament_id"]), int(p["entity_id"])): p
+            for p in state.tournament_participants
+        }
+        rows = []
+        for key in state.dirty_tournament_participant_keys:
+            participant = by_key.get(key)
+            if participant is None:
+                continue
+            rows.append(
+                (
+                    key[0],
+                    key[1],
+                    participant.get("status", "registered"),
+                    participant.get("seed"),
+                    participant.get("eliminated_round"),
+                    participant.get("joined_at_game_tick"),
+                    json.dumps(participant.get("payload") or {}),
+                )
+            )
+        if rows:
+            with conn.cursor() as cur:
+                cur.executemany(
+                    """
+                    INSERT INTO tournament_participants (
+                        tournament_id, entity_id, status, seed,
+                        eliminated_round, joined_at_game_tick, payload,
+                        updated_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, NOW())
+                    ON CONFLICT (tournament_id, entity_id) DO UPDATE
+                        SET status = EXCLUDED.status,
+                            seed = EXCLUDED.seed,
+                            eliminated_round = EXCLUDED.eliminated_round,
+                            joined_at_game_tick = EXCLUDED.joined_at_game_tick,
+                            payload = EXCLUDED.payload,
+                            updated_at = NOW()
+                    """,
+                    rows,
+                )
+            summary["tournament_participants_updated"] = len(rows)
 
     summary["events_inserted"] = bulk_insert_events(conn, region_id, events)
     update_last_tick_at(conn, region_id, now)

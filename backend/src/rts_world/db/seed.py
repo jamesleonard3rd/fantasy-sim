@@ -118,10 +118,12 @@ def seed_factions(conn: psycopg.Connection) -> None:
         for f in factions:
             cur.execute(
                 """
-                INSERT INTO factions (name, description) VALUES (%s, %s)
-                ON CONFLICT (name) DO NOTHING
+                INSERT INTO factions (name, description, kind) VALUES (%s, %s, %s)
+                ON CONFLICT (name) DO UPDATE
+                    SET description = EXCLUDED.description,
+                        kind = EXCLUDED.kind
                 """,
-                (f["name"], f.get("description")),
+                (f["name"], f.get("description"), f.get("kind", "generic")),
             )
 
         for f in factions:

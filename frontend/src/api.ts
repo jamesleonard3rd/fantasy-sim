@@ -34,6 +34,25 @@ export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
   return (await res.json()) as T;
 }
 
+export async function apiPatch<T>(path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "PATCH",
+    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let detail = "";
+    try {
+      const responseBody = await res.json();
+      detail = typeof responseBody?.detail === "string" ? `: ${responseBody.detail}` : "";
+    } catch {
+      // ignore non-JSON error bodies
+    }
+    throw new Error(`Request to ${path} failed (${res.status})${detail}`);
+  }
+  return (await res.json()) as T;
+}
+
 export async function apiPut<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     method: "PUT",

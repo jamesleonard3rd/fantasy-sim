@@ -6,27 +6,34 @@ commit or roll back.
 """
 from __future__ import annotations
 
+from typing import Any
+
 import psycopg
 
 from ..db import entity_repository as entities_repo
+from ..sim.goal_templates import goal_templates
 
 
 class EntityServiceError(Exception):
     """Base class for entity service failures."""
 
     detail = "Entity operation failed"
+    status_code = 400
 
 
 class EntityNotFound(EntityServiceError):
     detail = "Entity not found"
+    status_code = 404
 
 
 class RegionNotFound(EntityServiceError):
     detail = "Region not found"
+    status_code = 404
 
 
 class RelatedRecordNotFound(EntityServiceError):
     detail = "Related record not found"
+    status_code = 404
 
 
 class TraitNotFound(RelatedRecordNotFound):
@@ -45,6 +52,27 @@ class AbilityNotFound(RelatedRecordNotFound):
     detail = "Ability not found"
 
 
+class GoalsNotAvailable(EntityServiceError):
+    detail = "Goal storage is not available"
+    status_code = 500
+
+
+class ParentGoalNotFound(EntityServiceError):
+    detail = "Parent goal not found"
+    status_code = 404
+
+
+class InvalidGoalCompletionMode(EntityServiceError):
+    detail = "Invalid completion mode"
+
+
+class InvalidGoalType(EntityServiceError):
+    detail = "Goal type is required"
+
+
+_COMPLETION_MODES = frozenset({"ordered", "any_order", "all_required", "optional"})
+
+
 def _require_exists(
     conn: psycopg.Connection,
     table: str,
@@ -58,6 +86,14 @@ def _require_exists(
 
 def _require_entity(conn: psycopg.Connection, entity_id: int) -> None:
     _require_exists(conn, "entities", "id", entity_id, EntityNotFound)
+
+
+class UnknownGoalType(EntityServiceError):
+    detail = "Goal type is not available"
+
+
+class MissingGoalPayloadField(EntityServiceError):
+    detail = "Goal payload is missing required fields"
 
 
 def get_entity_detail(
@@ -156,3 +192,72 @@ def remove_entity_ability(
     ability_id: int,
 ) -> None:
     entities_repo.remove_entity_ability(conn, entity_id, ability_id)
+
+
+def add_entity_goal(
+    conn: psycopg.Connection,
+    entity_id: int,
+    goal_type: str,
+    payload: dict[str, Any] | None,
+    priority: int,
+    urgency: int,
+    completion_mode: str,
+    parent_goal_id: int | None,
+    interruptible: bool,
+    deadline_game_tick: int | None,
+) -> None:
+    _require_entity(conn, entity_id)
+    if not entities_repo.entity_goals_table_exists(conn):
+        raise GoalsNotAvailable()
+    cleaned_type = goal_type.strip()
+    if not cleaned_type:
+        raise InvalidGoalType()
+    templates = goal_templates()
+    template = templates.get(cleaned_type)
+    if template is None:
+        raise UnknownGoalType()
+    _require_goal_payload_fields(template, payload or {})
+    if completion_mode not in _COMPLETION_MODES:
+        raise InvalidGoalCompletionMode()
+    if parent_goal_id is not None and not entities_repo.entity_goal_exists_for_entity(
+        conn, entity_id, parent_goal_id
+    ):
+        raise ParentGoalNotFound()
+    entities_repo.add_entity_goal(
+        conn,
+        entity_id,
+        cleaned_type,
+        payload,
+        priority,
+        urgency,
+        completion_mode,
+        parent_goal_id,
+        interruptible,
+        deadline_game_tick,
+    )
+
+
+def remove_entity_goal(
+    conn: psycopg.Connection,
+    entity_id: int,
+    goal_id: int,
+) -> None:
+    entities_repo.remove_entity_goal(conn, entity_id, goal_id)
+
+
+def _require_goal_payload_fields(
+    template: dict[str, Any],
+    payload: dict[str, Any],
+) -> None:
+    requirements = template.get("requires", [])
+    if isinstance(requirements, str):
+        requirements = [requirements]
+    if not isinstance(requirements, list):
+        return
+    missing = [
+        field
+        for field in requirements
+        if isinstance(field, str) and payload.get(field) is None
+    ]
+    if missing:
+        raise MissingGoalPayloadField()

@@ -79,6 +79,42 @@ export type EntityHouseMembership = {
   joined_at: string;
 };
 
+export type EntityGoalStatus =
+  | "pending"
+  | "active"
+  | "paused"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export type GoalTemplateSummary = {
+  goal_type: string;
+  completion_mode: string;
+  requires: string[];
+};
+
+export type EntityGoal = {
+  id: number;
+  parent_goal_id: number | null;
+  goal_type: string;
+  status: EntityGoalStatus;
+  priority: number;
+  urgency: number;
+  deadline_game_tick: number | null;
+  interruptible: boolean;
+  completion_mode: string;
+  active: boolean;
+  progress: number;
+  cost: number;
+  danger: number;
+  payload: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+  started_at_game_tick: number | null;
+  paused_at_game_tick: number | null;
+  completed_at_game_tick: number | null;
+};
+
 export type EntityDetail = EntitySummary & {
   traits: EntityTrait[];
   factions: EntityFactionMembership[];
@@ -89,6 +125,7 @@ export type EntityDetail = EntitySummary & {
   relationships: EntityRelationship[];
   houses: EntityHouseMembership[];
   house: EntityHouseMembership | null;
+  goals: EntityGoal[];
 };
 
 export type FactionKind =
@@ -289,8 +326,8 @@ export type HouseDetail = HouseSummary & {
 export type SimStatus = {
   running: boolean;
   tick_count: number;
-  min_interval_seconds: number;
-  max_interval_seconds: number;
+  ticks_per_game_day: number;
+  tick_interval_seconds: number;
   next_tick_at: string | null;
   last_tick_at: string | null;
   last_region_id: number | null;
@@ -319,5 +356,17 @@ export type SimClock = {
   hour: number;
   minute: number;
   minute_of_day: number;
+  real_seconds_per_game_day: number;
+};
+
+export type GameSettings = {
+  traits?: Record<string, unknown>;
+  simulation?: { day_length_multiplier?: number; [key: string]: unknown };
+  balance?: Record<string, unknown>;
+  season_length?: number;
+};
+
+export type GameSettingsPatchResponse = {
+  settings: GameSettings;
   real_seconds_per_game_day: number;
 };

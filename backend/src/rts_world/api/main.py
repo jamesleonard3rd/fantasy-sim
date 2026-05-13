@@ -1,19 +1,19 @@
 from typing import Any
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from ..config import commit_game_settings, get_game_settings, merge_game_settings_in_memory
 from ..db.db import get_connection
 from ..services import entities as entity_service
-from ..sim.control import (
-    DEFAULT_MAX_INTERVAL_SECONDS,
-    DEFAULT_MIN_INTERVAL_SECONDS,
-    sim_controller,
-    sim_status_dict,
+from ..sim.control import sim_controller, sim_status_dict
+from ..sim.clock import (
+    GAME_MINUTES_PER_DAY,
+    game_minutes_per_real_second,
+    real_seconds_per_game_day,
 )
-from ..sim.clock import GAME_MINUTES_PER_DAY, GAME_MINUTES_PER_REAL_SECOND
 
 app = FastAPI(title="Fantasy Sim — Game State API")
 
@@ -39,18 +39,45 @@ def _entity_or_404(conn, entity_id: int) -> dict:
 
 
 def _raise_entity_service_error(exc: entity_service.EntityServiceError) -> None:
-    raise HTTPException(status_code=404, detail=exc.detail) from exc
-
-
-class SimStartRequest(BaseModel):
-    min_interval_seconds: float = Field(default=DEFAULT_MIN_INTERVAL_SECONDS, ge=1)
-    max_interval_seconds: float = Field(default=DEFAULT_MAX_INTERVAL_SECONDS, ge=1)
+    raise HTTPException(
+        status_code=getattr(exc, "status_code", 400),
+        detail=exc.detail,
+    ) from exc
 
 
 class RealmTimeUpdate(BaseModel):
     game_day: int = Field(ge=0)
     hour: int = Field(ge=0, le=23)
     minute: int = Field(ge=0, le=59)
+
+
+_DAY_LENGTH_MULTIPLIER_MAX = 1000.0
+
+
+def _validate_game_settings_patch(patch: dict[str, Any], merged: dict[str, Any]) -> None:
+    sim_patch = patch.get("simulation")
+    if "simulation" in patch and not isinstance(sim_patch, dict):
+        raise HTTPException(status_code=400, detail="simulation must be an object")
+    sim = merged.get("simulation")
+    if sim is not None and not isinstance(sim, dict):
+        raise HTTPException(status_code=400, detail="simulation must be an object")
+    if isinstance(sim_patch, dict) and "day_length_multiplier" in sim_patch:
+        raw = (sim or {}).get("day_length_multiplier")
+        try:
+            val = float(raw)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=400,
+                detail="simulation.day_length_multiplier must be a number",
+            ) from None
+        if val <= 0 or val > _DAY_LENGTH_MULTIPLIER_MAX:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "simulation.day_length_multiplier must be in "
+                    f"(0, {_DAY_LENGTH_MULTIPLIER_MAX:g}]"
+                ),
+            ) from None
 
 
 class EntityZoneUpdate(BaseModel):
@@ -69,6 +96,17 @@ class EntityItemUpdate(BaseModel):
 
 class EntityAbilityUpdate(BaseModel):
     level: int = Field(default=1, ge=1)
+
+
+class EntityGoalCreate(BaseModel):
+    goal_type: str = Field(min_length=1)
+    payload: dict[str, Any] | None = None
+    priority: int = Field(default=3, ge=1, le=5)
+    urgency: int = Field(default=0, ge=0, le=100)
+    completion_mode: str = Field(default="ordered")
+    parent_goal_id: int | None = None
+    interruptible: bool = True
+    deadline_game_tick: int | None = None
 
 
 _WORLD_EVENTS_SELECT = """
@@ -121,10 +159,11 @@ def sim_clock():
             if updated_at.tzinfo is None:
                 updated_at = updated_at.replace(tzinfo=timezone.utc)
             elapsed_seconds = (datetime.now(timezone.utc) - updated_at).total_seconds()
+            rate = game_minutes_per_real_second()
             total_minutes = (
                 game_day * GAME_MINUTES_PER_DAY
                 + minute_of_day
-                + max(0, round(elapsed_seconds * GAME_MINUTES_PER_REAL_SECOND))
+                + max(0, round(elapsed_seconds * rate))
             )
             game_day = total_minutes // GAME_MINUTES_PER_DAY
             minute_of_day = total_minutes % GAME_MINUTES_PER_DAY
@@ -135,19 +174,13 @@ def sim_clock():
         "hour": minute_of_day // 60,
         "minute": minute_of_day % 60,
         "minute_of_day": minute_of_day,
-        "real_seconds_per_game_day": 60,
+        "real_seconds_per_game_day": real_seconds_per_game_day(),
     }
 
 
 @app.post("/sim/start")
-def sim_start(request: SimStartRequest | None = None):
-    settings = request or SimStartRequest()
-    return sim_status_dict(
-        sim_controller.start(
-            min_interval_seconds=settings.min_interval_seconds,
-            max_interval_seconds=settings.max_interval_seconds,
-        )
-    )
+def sim_start():
+    return sim_status_dict(sim_controller.start())
 
 
 @app.post("/sim/stop")
@@ -173,6 +206,31 @@ def update_realm_time(request: RealmTimeUpdate):
             )
         conn.commit()
     return sim_clock()
+
+
+@app.get("/settings/game-settings")
+def read_game_settings():
+    return get_game_settings(force_reload=True)
+
+
+@app.patch("/settings/game-settings")
+def patch_game_settings(payload: dict[str, Any] = Body(...)):
+    if not payload:
+        raise HTTPException(status_code=400, detail="Patch body must not be empty")
+    try:
+        merged = merge_game_settings_in_memory(payload)
+    except TypeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    _validate_game_settings_patch(payload, merged)
+    commit_game_settings(merged)
+    return {
+        "settings": merged,
+        "real_seconds_per_game_day": real_seconds_per_game_day(),
+    }
 
 
 @app.get("/sim/events")
@@ -263,6 +321,31 @@ def summary():
 
 
 # -------- Entities --------
+
+
+@app.get("/goal-templates")
+def list_goal_templates():
+    from ..sim.goal_templates import goal_templates
+
+    out: list[dict[str, Any]] = []
+    for goal_type, tmpl in goal_templates().items():
+        req = tmpl.get("requires", [])
+        if isinstance(req, str):
+            requires_list = [req]
+        elif isinstance(req, list):
+            requires_list = [str(x) for x in req]
+        else:
+            requires_list = []
+        out.append(
+            {
+                "goal_type": goal_type,
+                "completion_mode": str(tmpl.get("completion_mode", "ordered")),
+                "requires": requires_list,
+            }
+        )
+    out.sort(key=lambda row: row["goal_type"])
+    return out
+
 
 @app.get("/entities")
 def list_entities():
@@ -406,6 +489,36 @@ def add_entity_ability(
 def remove_entity_ability(entity_id: int, ability_id: int):
     with get_connection() as conn:
         entity_service.remove_entity_ability(conn, entity_id, ability_id)
+        conn.commit()
+        return _entity_or_404(conn, entity_id)
+
+
+@app.post("/entities/{entity_id}/goals")
+def add_entity_goal(entity_id: int, request: EntityGoalCreate):
+    with get_connection() as conn:
+        try:
+            entity_service.add_entity_goal(
+                conn,
+                entity_id,
+                request.goal_type,
+                request.payload,
+                request.priority,
+                request.urgency,
+                request.completion_mode,
+                request.parent_goal_id,
+                request.interruptible,
+                request.deadline_game_tick,
+            )
+        except entity_service.EntityServiceError as exc:
+            _raise_entity_service_error(exc)
+        conn.commit()
+        return _entity_or_404(conn, entity_id)
+
+
+@app.delete("/entities/{entity_id}/goals/{goal_id}")
+def remove_entity_goal(entity_id: int, goal_id: int):
+    with get_connection() as conn:
+        entity_service.remove_entity_goal(conn, entity_id, goal_id)
         conn.commit()
         return _entity_or_404(conn, entity_id)
 

@@ -67,7 +67,7 @@ ALTER TABLE factions
 CREATE TABLE IF NOT EXISTS entity_factions (
     entity_id INT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
     faction_id INT NOT NULL REFERENCES factions(id) ON DELETE CASCADE,
-    rank TEXT NOT NULL CHECK (rank IN ('member', 'officer', 'leader', 'ally')),
+    rank TEXT NOT NULL,
     reputation SMALLINT DEFAULT 0 CHECK (reputation BETWEEN -100 AND 100),
     PRIMARY KEY (entity_id, faction_id)
 );
@@ -162,6 +162,72 @@ CREATE TABLE IF NOT EXISTS entity_zones (
 );
 ALTER TABLE entity_zones
     ADD COLUMN IF NOT EXISTS region_id INT REFERENCES regions(id) ON DELETE SET NULL;
+
+-- Persistent entity goals. A goal row is both the scheduler input and the
+-- resume point for long-running plans; parent_goal_id gives us ordered or
+-- flexible subgoal trees without a separate runtime GoalBrain object.
+CREATE TABLE IF NOT EXISTS entity_goals (
+    id BIGSERIAL PRIMARY KEY,
+    entity_id INT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    parent_goal_id BIGINT REFERENCES entity_goals(id) ON DELETE CASCADE,
+    goal_type TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    priority SMALLINT NOT NULL DEFAULT 3 CHECK (priority BETWEEN 1 AND 5),
+    urgency SMALLINT NOT NULL DEFAULT 0 CHECK (urgency BETWEEN 0 AND 100),
+    deadline_game_tick BIGINT,
+    interruptible BOOLEAN NOT NULL DEFAULT TRUE,
+    completion_mode TEXT NOT NULL DEFAULT 'ordered',
+    active BOOLEAN NOT NULL DEFAULT FALSE,
+    progress NUMERIC NOT NULL DEFAULT 0 CHECK (progress >= 0 AND progress <= 100),
+    cost NUMERIC NOT NULL DEFAULT 0 CHECK (cost >= 0),
+    danger NUMERIC NOT NULL DEFAULT 0 CHECK (danger >= 0),
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    started_at_game_tick BIGINT,
+    paused_at_game_tick BIGINT,
+    completed_at_game_tick BIGINT,
+    CHECK (parent_goal_id IS NULL OR parent_goal_id <> id),
+    CHECK (status IN ('pending','active','paused','completed','failed','cancelled')),
+    CHECK (completion_mode IN ('ordered','any_order','all_required','optional'))
+);
+
+-- Region-scoped multi-step event simulation. Goals can get entities to a
+-- tournament; these rows own shared event state like registration, brackets,
+-- rounds, and winners.
+CREATE TABLE IF NOT EXISTS tournament_instances (
+    id BIGSERIAL PRIMARY KEY,
+    region_id INT NOT NULL REFERENCES regions(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'scheduled',
+    registration_opens_at_game_tick BIGINT,
+    registration_closes_at_game_tick BIGINT,
+    starts_at_game_tick BIGINT NOT NULL,
+    current_round INT NOT NULL DEFAULT 0 CHECK (current_round >= 0),
+    max_rounds_per_tick INT NOT NULL DEFAULT 1 CHECK (max_rounds_per_tick > 0),
+    winner_entity_id INT REFERENCES entities(id) ON DELETE SET NULL,
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    completed_at_game_tick BIGINT,
+    CHECK (status IN (
+        'scheduled','registration_open','registration_closed',
+        'running','completed','cancelled'
+    ))
+);
+
+CREATE TABLE IF NOT EXISTS tournament_participants (
+    tournament_id BIGINT NOT NULL REFERENCES tournament_instances(id) ON DELETE CASCADE,
+    entity_id INT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'registered',
+    seed INT,
+    eliminated_round INT,
+    joined_at_game_tick BIGINT,
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    PRIMARY KEY (tournament_id, entity_id),
+    CHECK (status IN ('registered','active','eliminated','winner','withdrew'))
+);
 
 -- Position: only loaded when player views that zone
 CREATE TABLE IF NOT EXISTS entity_positions (
@@ -298,6 +364,19 @@ INSERT INTO world_clock (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
 
 CREATE INDEX IF NOT EXISTS idx_entity_zones_zone ON entity_zones(zone);
 CREATE INDEX IF NOT EXISTS idx_entity_zones_region ON entity_zones(region_id);
+CREATE INDEX IF NOT EXISTS idx_entity_goals_entity_status
+    ON entity_goals(entity_id, status);
+CREATE INDEX IF NOT EXISTS idx_entity_goals_parent
+    ON entity_goals(parent_goal_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_goals_one_active
+    ON entity_goals(entity_id) WHERE active = TRUE;
+CREATE INDEX IF NOT EXISTS idx_tournament_instances_region_status
+    ON tournament_instances(region_id, status);
+CREATE INDEX IF NOT EXISTS idx_tournament_instances_due
+    ON tournament_instances(region_id, starts_at_game_tick)
+    WHERE status NOT IN ('completed', 'cancelled');
+CREATE INDEX IF NOT EXISTS idx_tournament_participants_entity
+    ON tournament_participants(entity_id);
 CREATE INDEX IF NOT EXISTS idx_entity_factions_faction ON entity_factions(faction_id);
 CREATE INDEX IF NOT EXISTS idx_entity_traits_trait ON entity_traits(trait_id);
 CREATE INDEX IF NOT EXISTS idx_entity_houses_house ON entity_houses(house_id);

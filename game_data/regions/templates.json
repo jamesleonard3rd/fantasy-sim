@@ -8,12 +8,47 @@
       "notes": "Border forest where the realm thins; first template region from game data."
     },
     {
+      "name": "Frostpine Reach",
+      "type": "region",
+      "parent": null,
+      "tick_interval_seconds": 180,
+      "paused": false,
+      "notes": "Cold northern wilds directly north of the Whisperwood Marches."
+    },
+    {
       "name": "Valemont Keep",
       "type": "castle",
       "parent": "Whisperwood Marches",
       "tick_interval_seconds": 180,
       "paused": false,
       "notes": "Seat of House Valemont within the Whisperwood Marches."
+    }
+  ],
+  "travel_nodes": [
+    {
+      "id": "whisperwood_frostpine_border",
+      "name": "Whisperwood-Frostpine Border",
+      "regions": ["Whisperwood Marches", "Frostpine Reach"],
+      "kind": "border",
+      "notes": "Shared border crossing between Whisperwood Marches and Frostpine Reach."
+    }
+  ],
+  "travel_edges": [
+    {
+      "from": "Whisperwood Marches",
+      "to": "whisperwood_frostpine_border",
+      "mode": "road",
+      "base_ticks": 15,
+      "bidirectional": true,
+      "notes": "Route from the Whisperwood Marches interior to the northern border."
+    },
+    {
+      "from": "Frostpine Reach",
+      "to": "whisperwood_frostpine_border",
+      "mode": "road",
+      "base_ticks": 15,
+      "bidirectional": true,
+      "notes": "Route from Frostpine Reach's southern interior to the shared border."
     }
   ]
 }

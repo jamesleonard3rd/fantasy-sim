@@ -6,6 +6,7 @@ commit, or translate errors into HTTP responses.
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import psycopg
@@ -14,6 +15,12 @@ import psycopg
 def _rows_to_dicts(cur: Any) -> list[dict[str, Any]]:
     cols = [c.name for c in cur.description] if cur.description else []
     return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def entity_goals_table_exists(conn: psycopg.Connection) -> bool:
+    with conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('public.entity_goals')")
+        return cur.fetchone()[0] is not None
 
 
 def row_exists(
@@ -150,6 +157,29 @@ def get_entity_detail(
         house_rows = _rows_to_dicts(cur)
         entity["house"] = house_rows[0] if house_rows else None
         entity["houses"] = house_rows
+
+        cur.execute("SELECT to_regclass('public.entity_goals')")
+        if cur.fetchone()[0] is None:
+            entity["goals"] = []
+            return entity
+
+        cur.execute(
+            """
+            SELECT id, parent_goal_id, goal_type, status, priority, urgency,
+                   deadline_game_tick, interruptible, completion_mode, active,
+                   progress::double precision AS progress,
+                   cost::double precision AS cost,
+                   danger::double precision AS danger,
+                   payload, created_at, updated_at, started_at_game_tick,
+                   paused_at_game_tick, completed_at_game_tick
+            FROM entity_goals
+            WHERE entity_id = %s
+            ORDER BY active DESC, parent_goal_id NULLS FIRST, priority DESC,
+                     urgency DESC, id
+            """,
+            (entity_id,),
+        )
+        entity["goals"] = _rows_to_dicts(cur)
 
     return entity
 
@@ -292,3 +322,67 @@ def remove_entity_ability(
             "DELETE FROM entity_abilities WHERE entity_id = %s AND ability_id = %s",
             (entity_id, ability_id),
         )
+
+
+def add_entity_goal(
+    conn: psycopg.Connection,
+    entity_id: int,
+    goal_type: str,
+    payload: dict[str, Any] | None,
+    priority: int,
+    urgency: int,
+    completion_mode: str,
+    parent_goal_id: int | None,
+    interruptible: bool,
+    deadline_game_tick: int | None,
+) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO entity_goals (
+                entity_id, parent_goal_id, goal_type, status, priority, urgency,
+                deadline_game_tick, interruptible, completion_mode, active,
+                progress, cost, danger, payload
+            ) VALUES (
+                %s, %s, %s, 'pending', %s, %s,
+                %s, %s, %s, FALSE,
+                0, 0, 0, %s::jsonb
+            )
+            """,
+            (
+                entity_id,
+                parent_goal_id,
+                goal_type,
+                priority,
+                urgency,
+                deadline_game_tick,
+                interruptible,
+                completion_mode,
+                json.dumps(payload or {}),
+            ),
+        )
+
+
+def remove_entity_goal(
+    conn: psycopg.Connection,
+    entity_id: int,
+    goal_id: int,
+) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM entity_goals WHERE entity_id = %s AND id = %s",
+            (entity_id, goal_id),
+        )
+
+
+def entity_goal_exists_for_entity(
+    conn: psycopg.Connection,
+    entity_id: int,
+    goal_id: int,
+) -> bool:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT 1 FROM entity_goals WHERE id = %s AND entity_id = %s",
+            (goal_id, entity_id),
+        )
+        return cur.fetchone() is not None

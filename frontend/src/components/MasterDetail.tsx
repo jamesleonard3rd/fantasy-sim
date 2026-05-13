@@ -6,6 +6,7 @@ import { EmptyState, ErrorBox, Loader } from "./common";
 type Props<TList, TDetail> = {
   listEndpoint: string;
   detailEndpoint?: (id: number) => string;
+  refreshIntervalMs?: number;
   getId: (item: TList) => number;
   getTitle: (item: TList) => string;
   getSubtitle?: (item: TList) => string | undefined;
@@ -19,6 +20,7 @@ type Props<TList, TDetail> = {
 export function MasterDetail<TList, TDetail>({
   listEndpoint,
   detailEndpoint,
+  refreshIntervalMs,
   getId,
   getTitle,
   getSubtitle,
@@ -38,26 +40,41 @@ export function MasterDetail<TList, TDetail>({
 
   useEffect(() => {
     let cancelled = false;
-    setItems(null);
-    setListError("");
-    apiGet<TList[]>(listEndpoint)
-      .then((data) => {
-        if (cancelled) return;
-        setItems(data);
-        if (data.length > 0) {
-          setSelectedId(getId(data[0]));
-        } else {
-          setSelectedId(null);
-        }
-      })
-      .catch((err: Error) => {
-        if (!cancelled) setListError(err.message);
-      });
+
+    const loadList = (showLoader: boolean) => {
+      if (showLoader) setItems(null);
+      setListError("");
+      apiGet<TList[]>(listEndpoint)
+        .then((data) => {
+          if (cancelled) return;
+          setItems(data);
+          setSelectedId((currentId) => {
+            if (data.length === 0) return null;
+            if (currentId !== null && data.some((item) => getId(item) === currentId)) {
+              return currentId;
+            }
+            return getId(data[0]);
+          });
+        })
+        .catch((err: Error) => {
+          if (!cancelled) setListError(err.message);
+        });
+    };
+
+    loadList(true);
+    const intervalId =
+      refreshIntervalMs && refreshIntervalMs > 0
+        ? window.setInterval(() => loadList(false), refreshIntervalMs)
+        : undefined;
+
     return () => {
       cancelled = true;
+      if (intervalId !== undefined) {
+        window.clearInterval(intervalId);
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [listEndpoint]);
+  }, [listEndpoint, refreshIntervalMs]);
 
   useEffect(() => {
     if (selectedId == null || !detailEndpoint) {
@@ -65,23 +82,36 @@ export function MasterDetail<TList, TDetail>({
       return;
     }
     let cancelled = false;
-    setDetailLoading(true);
-    setDetailError("");
-    apiGet<TDetail>(detailEndpoint(selectedId))
-      .then((data) => {
-        if (!cancelled) setDetail(data);
-      })
-      .catch((err: Error) => {
-        if (!cancelled) setDetailError(err.message);
-      })
-      .finally(() => {
-        if (!cancelled) setDetailLoading(false);
-      });
+
+    const loadDetail = (showLoader: boolean) => {
+      if (showLoader) setDetailLoading(true);
+      setDetailError("");
+      apiGet<TDetail>(detailEndpoint(selectedId))
+        .then((data) => {
+          if (!cancelled) setDetail(data);
+        })
+        .catch((err: Error) => {
+          if (!cancelled) setDetailError(err.message);
+        })
+        .finally(() => {
+          if (!cancelled && showLoader) setDetailLoading(false);
+        });
+    };
+
+    loadDetail(true);
+    const intervalId =
+      refreshIntervalMs && refreshIntervalMs > 0
+        ? window.setInterval(() => loadDetail(false), refreshIntervalMs)
+        : undefined;
+
     return () => {
       cancelled = true;
+      if (intervalId !== undefined) {
+        window.clearInterval(intervalId);
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId, detailEndpoint]);
+  }, [selectedId, detailEndpoint, refreshIntervalMs]);
 
   const filtered = useMemo(() => {
     if (!items) return [];

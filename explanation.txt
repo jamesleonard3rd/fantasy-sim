@@ -1,0 +1,34 @@
+The sim is basically a loop that updates one region at a time.
+
+Something starts the sim:
+
+runner.py starts it from the command line.
+control.py starts it from the API/background thread.
+scheduler.py decides which region should tick next.
+Everything funnels into tick.py, especially tick_region().
+
+For one tick, tick_region():
+
+Loads one region from the database using regions.py.
+Puts that data into an in-memory object from state.py, mainly RegionState.
+Builds a TickContext, which includes things like current game day, tick number, time, and random generator.
+Runs the sim systems from systems/.
+Saves changed data back to the database.
+Inserts generated events.
+Advances the world clock.
+Very simply:
+
+scheduler/API/CLI
+    -> tick_region()
+        -> load region state
+        -> run systems
+        -> collect events
+        -> save changes
+        -> advance clock
+The systems are the actual game logic. In systems/__init__.py, the default order is roughly:
+
+relationship dynamics
+-> goals
+-> tournaments
+-> heartbeat
+So the database is the long-term source of truth, RegionState is the temporary working copy for one tick, and the systems are the rules that change the world

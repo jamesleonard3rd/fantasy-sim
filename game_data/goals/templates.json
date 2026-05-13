@@ -1,0 +1,77 @@
+{
+  "goal_templates": [
+    {
+      "goal_type": "travel_to_region",
+      "completion_mode": "ordered",
+      "requires": ["region_id"],
+      "steps": []
+    },
+    {
+      "goal_type": "join_faction",
+      "completion_mode": "ordered",
+      "requires": ["faction_id"],
+      "steps": [
+        {
+          "goal_type": "travel_to_region",
+          "when": ["target_region_exists", "entity_not_in_target_region"],
+          "payload": {
+            "region_id": "$target_region_id",
+            "duration_ticks": {
+              "ref": "$payload.travel_ticks",
+              "default": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "goal_type": "enter_tournament",
+      "completion_mode": "ordered",
+      "requires": ["tournament_id"],
+      "steps": [
+        {
+          "goal_type": "travel_to_region",
+          "when": ["target_region_exists", "entity_not_in_target_region"],
+          "payload": {
+            "region_id": "$target_region_id",
+            "duration_ticks": {
+              "ref": "$payload.travel_ticks",
+              "default": 1
+            }
+          }
+        },
+        {
+          "goal_type": "wait_until",
+          "when": ["registration_tick_exists"],
+          "payload": {
+            "target_game_tick": "$registration_tick"
+          }
+        },
+        {
+          "goal_type": "register_for_tournament",
+          "payload": {
+            "tournament_id": "$payload.tournament_id",
+            "seed": "$payload.seed",
+            "participant_payload": {
+              "ref": "$payload.participant_payload",
+              "default": {}
+            }
+          }
+        },
+        {
+          "goal_type": "wait_until",
+          "when": ["starts_at_exists"],
+          "payload": {
+            "target_game_tick": "$starts_at"
+          }
+        },
+        {
+          "goal_type": "compete_in_tournament",
+          "payload": {
+            "tournament_id": "$payload.tournament_id"
+          }
+        }
+      ]
+    }
+  ]
+}
