@@ -34,6 +34,30 @@ def row_exists(
         return cur.fetchone() is not None
 
 
+def get_faction_kind(conn: psycopg.Connection, faction_id: int) -> str | None:
+    with conn.cursor() as cur:
+        cur.execute("SELECT kind FROM factions WHERE id = %s", (faction_id,))
+        row = cur.fetchone()
+    return str(row[0]) if row is not None else None
+
+
+def get_entity_house_faction_id(conn: psycopg.Connection, entity_id: int) -> int | None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT ef.faction_id
+            FROM entity_factions ef
+            JOIN factions f ON f.id = ef.faction_id
+            WHERE ef.entity_id = %s
+              AND f.kind = 'house'
+            LIMIT 1
+            """,
+            (entity_id,),
+        )
+        row = cur.fetchone()
+    return int(row[0]) if row is not None else None
+
+
 def get_region_name(conn: psycopg.Connection, region_id: int) -> str | None:
     with conn.cursor() as cur:
         cur.execute("SELECT name FROM regions WHERE id = %s", (region_id,))
@@ -146,11 +170,12 @@ def get_entity_detail(
         cur.execute(
             """
             SELECT hf.id, hf.name, hf.description AS notes,
-                   h.type, h.default_surname, eh.role, eh.joined_at
-            FROM entity_houses eh
-            JOIN houses h ON h.faction_id = eh.house_id
-            JOIN factions hf ON hf.id = eh.house_id
-            WHERE eh.entity_id = %s
+                   h.type, h.default_surname, ef.rank, ef.joined_at
+            FROM entity_factions ef
+            JOIN factions hf ON hf.id = ef.faction_id
+            JOIN houses h ON h.faction_id = ef.faction_id
+            WHERE ef.entity_id = %s
+              AND hf.kind = 'house'
             """,
             (entity_id,),
         )

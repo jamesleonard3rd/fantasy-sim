@@ -37,7 +37,18 @@ def expand_goal_template(
     if _has_incomplete_children(state.goals_by_entity_id.get(int(entity["id"]), []), goal):
         return []
 
-    template = goal_templates().get(str(goal.get("goal_type")))
+    goal_type = str(goal.get("goal_type"))
+
+    if goal_type == "travel_to_region":
+        template = goal_templates().get(goal_type)
+        if template is None:
+            return []
+        context = _context_for(state, entity, goal)
+        if not _requirements_met(template, context):
+            return []
+        return _expand_travel_to_region_route(state, entity, goal, context)
+
+    template = goal_templates().get(goal_type)
     if template is None:
         return []
 
@@ -64,6 +75,64 @@ def expand_goal_template(
         )
         order += 1
     return children
+
+
+def _expand_travel_to_region_route(
+    state: RegionState,
+    entity: dict[str, Any],
+    goal: dict[str, Any],
+    context: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Insert ordered ``travel_segment`` children from ``travel_edges``, when possible."""
+    from .travel import route_travel_segments
+
+    parent_id = int(goal["id"])
+    entity_id = int(entity["id"])
+    goals = state.goals_by_entity_id.get(entity_id, [])
+    if any(g.get("parent_goal_id") == parent_id for g in goals):
+        return []
+
+    target = context.get("target_region_id")
+    if target is None:
+        return []
+    target_int = int(target)
+    cur = entity.get("region_id")
+    if cur is not None and int(cur) == target_int:
+        return []
+
+    payload = goal.get("payload") or {}
+    if "duration_ticks" in payload:
+        return []
+
+    route = route_travel_segments(
+        int(cur) if cur is not None else None,
+        target_int,
+        state.regions_by_id,
+    )
+    if route:
+        tmpl = goal_templates().get("travel_to_region") or {}
+        completion_mode = str(tmpl.get("completion_mode", "ordered"))
+        children: list[dict[str, Any]] = []
+        for order, seg in enumerate(route, start=1):
+            children.append(
+                _child_goal(
+                    goal,
+                    "travel_segment",
+                    order,
+                    {
+                        "from_region_id": seg.from_region_id,
+                        "to_region_id": seg.to_region_id,
+                        "duration_ticks": seg.duration_ticks,
+                        "mode": seg.mode,
+                        "from_name": seg.from_name,
+                        "to_name": seg.to_name,
+                    },
+                    completion_mode=completion_mode,
+                )
+            )
+        return children
+
+    return []
 
 
 @lru_cache(maxsize=1)

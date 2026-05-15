@@ -58,11 +58,17 @@ class RegionState:
     goals: list[dict[str, Any]] = field(default_factory=list)
     tournaments: list[dict[str, Any]] = field(default_factory=list)
     tournament_participants: list[dict[str, Any]] = field(default_factory=list)
+    factions: list[dict[str, Any]] = field(default_factory=list)
+    region_control: list[dict[str, Any]] = field(default_factory=list)
+    faction_orders: list[dict[str, Any]] = field(default_factory=list)
 
     # Indices that systems can rely on; rebuilt by load_region_state.
     entities_by_id: dict[int, dict[str, Any]] = field(default_factory=dict)
     goals_by_entity_id: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
     regions_by_id: dict[int, dict[str, Any]] = field(default_factory=dict)
+    factions_by_id: dict[int, dict[str, Any]] = field(default_factory=dict)
+    members_by_faction_id: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
+    region_control_by_region_id: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
     tournaments_by_id: dict[int, dict[str, Any]] = field(default_factory=dict)
     tournament_participants_by_tournament_id: dict[int, list[dict[str, Any]]] = field(
         default_factory=dict
@@ -74,6 +80,7 @@ class RegionState:
     dirty_relationship_keys: set[tuple[int, int]] = field(default_factory=set)
     dirty_relationship_term_ids: set[int] = field(default_factory=set)
     dirty_goal_ids: set[int] = field(default_factory=set)
+    dirty_faction_order_ids: set[int] = field(default_factory=set)
     dirty_tournament_ids: set[int] = field(default_factory=set)
     dirty_tournament_participant_keys: set[tuple[int, int]] = field(default_factory=set)
 
@@ -118,6 +125,26 @@ class RegionState:
         self.tournament_participants_by_tournament_id.setdefault(
             tournament_id, []
         ).append(participant)
+
+    def mark_faction_order_dirty(self, order_id: int | None) -> None:
+        if order_id is not None:
+            self.dirty_faction_order_ids.add(int(order_id))
+
+    def add_faction(self, faction: dict[str, Any]) -> None:
+        self.factions.append(faction)
+        self.factions_by_id[int(faction["id"])] = faction
+
+    def add_region_control(self, row: dict[str, Any]) -> None:
+        self.region_control.append(row)
+        rid = int(row["region_id"])
+        self.region_control_by_region_id.setdefault(rid, []).append(row)
+
+    def add_member(self, member: dict[str, Any]) -> None:
+        fid = int(member["faction_id"])
+        self.members_by_faction_id.setdefault(fid, []).append(member)
+
+    def add_faction_order(self, order: dict[str, Any]) -> None:
+        self.faction_orders.append(order)
 
 
 # ---------- per-tick context shared by all systems ----------

@@ -4,7 +4,7 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from ..db.db import get_connection
@@ -38,6 +38,7 @@ class ApiSimController:
         self._stop_event = threading.Event()
         self._tick_count = 0
         self._next_tick_at: datetime | None = None
+        self._resume_delay_seconds: float | None = None
         self._last_tick_at: datetime | None = None
         self._last_result: TickResult | None = None
         self._last_error: str | None = None
@@ -47,7 +48,14 @@ class ApiSimController:
             if self._thread is not None and self._thread.is_alive():
                 return self._status_unlocked()
 
-            self._next_tick_at = datetime.now(timezone.utc)
+            now = datetime.now(timezone.utc)
+            if self._resume_delay_seconds is None:
+                self._next_tick_at = now
+            else:
+                self._next_tick_at = now + timedelta(
+                    seconds=max(0.0, self._resume_delay_seconds)
+                )
+            self._resume_delay_seconds = None
             self._last_error = None
             with get_connection() as conn:
                 touch_clock(conn)
@@ -68,6 +76,7 @@ class ApiSimController:
             if not was_running:
                 self._next_tick_at = None
                 return self._status_unlocked()
+            self._resume_delay_seconds = self._remaining_delay_seconds_unlocked()
             self._stop_event.set()
 
         thread.join(timeout=2.0)
@@ -109,6 +118,16 @@ class ApiSimController:
 
     def _run_loop(self) -> None:
         while not self._stop_event.is_set():
+            with self._lock:
+                next_tick_at = self._next_tick_at
+            if next_tick_at is not None:
+                delay = max(
+                    0.0,
+                    (next_tick_at - datetime.now(timezone.utc)).total_seconds(),
+                )
+                if self._stop_event.wait(delay):
+                    break
+
             try:
                 results = self._tick_unpaused_regions()
                 with self._lock:
@@ -134,6 +153,14 @@ class ApiSimController:
 
         with self._lock:
             self._next_tick_at = None
+
+    def _remaining_delay_seconds_unlocked(self) -> float | None:
+        if self._next_tick_at is None:
+            return None
+        return max(
+            0.0,
+            (self._next_tick_at - datetime.now(timezone.utc)).total_seconds(),
+        )
 
     def _tick_unpaused_regions(self) -> list[TickResult]:
         with get_connection() as conn:

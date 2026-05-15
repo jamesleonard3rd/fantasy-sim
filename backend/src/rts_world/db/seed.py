@@ -21,7 +21,7 @@ from typing import Any, Iterable
 
 import psycopg
 
-from ..sim.regions import upsert_region
+from ..sim.regions import set_region_control, upsert_region
 from .db import get_connection
 
 
@@ -163,6 +163,14 @@ def load_region_templates() -> list[dict[str, Any]]:
     return out
 
 
+def _region_key(template: dict[str, Any]) -> str:
+    return str(template.get("key") or template["name"])
+
+
+def _region_ref(template: dict[str, Any]) -> str:
+    return _region_key(template)
+
+
 def seed_regions(conn: psycopg.Connection) -> None:
     """Upsert regions from templates (same file as ``seed-regions`` CLI)."""
     print("Seeding regions...")
@@ -173,33 +181,38 @@ def seed_regions(conn: psycopg.Connection) -> None:
 
     region_ids: dict[str, int] = {}
     for r in templates:
-        region_ids[str(r["name"])] = upsert_region(
+        key = _region_key(r)
+        region_id = upsert_region(
             conn,
+            key=key,
             name=str(r["name"]),
             region_type=str(r.get("type", r.get("kind", "region"))),
             parent_id=None,
             tick_interval_seconds=int(r.get("tick_interval_seconds", 180)),
             paused=bool(r.get("paused", False)),
         )
+        region_ids[key] = region_id
+        region_ids.setdefault(str(r["name"]), region_id)
 
     for r in templates:
-        parent_name = r.get("parent")
-        if not parent_name:
+        parent_ref = r.get("parent")
+        if not parent_ref:
             continue
-        parent_id = region_ids.get(str(parent_name))
+        parent_id = region_ids.get(str(parent_ref))
         if parent_id is None:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT id FROM regions WHERE name = %s",
-                    (str(parent_name),),
+                    "SELECT id FROM regions WHERE key = %s OR name = %s ORDER BY key = %s DESC LIMIT 1",
+                    (str(parent_ref), str(parent_ref), str(parent_ref)),
                 )
                 row = cur.fetchone()
                 parent_id = int(row[0]) if row else None
         if parent_id is None:
-            print(f"  WARN region '{r['name']}' references unknown parent '{parent_name}'")
+            print(f"  WARN region '{r['name']}' references unknown parent '{parent_ref}'")
             continue
         upsert_region(
             conn,
+            key=_region_key(r),
             name=str(r["name"]),
             region_type=str(r.get("type", r.get("kind", "region"))),
             parent_id=parent_id,
@@ -208,6 +221,55 @@ def seed_regions(conn: psycopg.Connection) -> None:
         )
     conn.commit()
     print(f"  OK {len(templates)} regions")
+
+
+def seed_region_control(
+    conn: psycopg.Connection,
+    templates: list[dict[str, Any]] | None = None,
+) -> None:
+    """Assign owner/controller rows from region templates."""
+    print("Seeding region control...")
+    templates = templates if templates is not None else load_region_templates()
+    if not templates:
+        print(f"  WARN no region templates in {REGIONS_FILE.relative_to(PROJECT_DIR)}")
+        return
+
+    assigned = 0
+    with conn.cursor() as cur:
+        cur.execute("SELECT id, key, name FROM regions")
+        region_ids: dict[str, int] = {}
+        for rid, key, name in cur.fetchall():
+            region_ids[str(key)] = int(rid)
+            region_ids.setdefault(str(name), int(rid))
+        cur.execute("SELECT id, name FROM factions")
+        faction_ids = {str(name): int(fid) for fid, name in cur.fetchall()}
+
+    for r in templates:
+        region_ref = _region_ref(r)
+        region_name = str(r["name"])
+        region_id = region_ids.get(region_ref)
+        if region_id is None:
+            print(f"  WARN region '{region_name}' missing, skipping control")
+            continue
+
+        owner_name = r.get("owner")
+        controller_name = r.get("controller", owner_name)
+        for role, faction_name in (("owner", owner_name), ("controller", controller_name)):
+            if not faction_name:
+                print(f"  WARN region '{region_name}' missing {role}")
+                continue
+            faction_id = faction_ids.get(str(faction_name))
+            if faction_id is None:
+                print(
+                    f"  WARN region '{region_name}' {role} faction "
+                    f"'{faction_name}' missing"
+                )
+                continue
+            set_region_control(conn, region_id, faction_id, role=role)
+            assigned += 1
+
+    conn.commit()
+    print(f"  OK {assigned} region control rows")
 
 
 def seed_stats(conn: psycopg.Connection) -> None:
@@ -506,7 +568,7 @@ def seed_database(*, apply_schema: bool = True) -> None:
             _run_sql_file(conn, SCHEMA_FILE)
 
         # Order matters: races -> factions -> regions -> stats -> abilities -> items
-        # -> traits -> schools -> houses
+        # -> traits -> schools -> houses -> region control
         seed_races(conn)
         seed_factions(conn)
         seed_regions(conn)
@@ -516,6 +578,7 @@ def seed_database(*, apply_schema: bool = True) -> None:
         seed_traits(conn)
         seed_schools(conn)
         seed_houses(conn)
+        seed_region_control(conn)
 
         print("\nOK Database seeded successfully!")
     except Exception as e:

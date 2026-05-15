@@ -1,54 +1,109 @@
 {
   "regions": [
     {
+      "key": "whisperwood_marches",
       "name": "Whisperwood Marches",
       "type": "region",
+      "owner": "House Valemont",
+      "controller": "House Valemont",
       "tick_interval_seconds": 180,
       "paused": false,
       "notes": "Border forest where the realm thins; first template region from game data."
     },
     {
+      "key": "frostpine_reach",
       "name": "Frostpine Reach",
       "type": "region",
-      "parent": null,
+      "owner": "The White Tower",
+      "controller": "The White Tower",
       "tick_interval_seconds": 180,
       "paused": false,
       "notes": "Cold northern wilds directly north of the Whisperwood Marches."
     },
     {
+      "key": "valemont_keep",
       "name": "Valemont Keep",
       "type": "castle",
-      "parent": "Whisperwood Marches",
-      "tick_interval_seconds": 180,
+      "parent": "whisperwood_marches",
+      "owner": "House Valemont",
+      "controller": "House Valemont",
       "paused": false,
       "notes": "Seat of House Valemont within the Whisperwood Marches."
-    }
-  ],
-  "travel_nodes": [
+    },
     {
-      "id": "whisperwood_frostpine_border",
+      "name": "Valemont Market",
+      "type": "market",
+      "parent": "Valemont Keep",
+      "owner": "House Valemont",
+      "controller": "House Valemont",
+      "paused": false,
+      "notes": "City market nestled within the heart of Valemont Keep."
+    },
+    {
+      "name": "Valemont Keep Barracks",
+      "type": "barracks",
+      "parent": "Valemont Keep",
+      "owner": "House Valemont",
+      "controller": "House Valemont",
+      "paused": false,
+      "notes": ""
+    },
+    {
+      "key": "whisperwood_frostpine_border",
       "name": "Whisperwood-Frostpine Border",
-      "regions": ["Whisperwood Marches", "Frostpine Reach"],
-      "kind": "border",
-      "notes": "Shared border crossing between Whisperwood Marches and Frostpine Reach."
+      "type": "border",
+      "parent": "whisperwood_marches",
+      "owner": "House Valemont",
+      "controller": "House Valemont",
+      "paused": false,
+      "notes": "Whisperwood side of the marchline; subregion of the marches."
+    },
+    {
+      "key": "frostpine_whisperwood_border",
+      "name": "Frostpine-Whisperwood Border",
+      "type": "border",
+      "parent": "frostpine_reach",
+      "owner": "The White Tower",
+      "controller": "The White Tower",
+      "paused": false,
+      "notes": "Frostpine side of the marchline; subregion of Frostpine Reach."
     }
   ],
   "travel_edges": [
     {
-      "from": "Whisperwood Marches",
+      "from": "whisperwood_marches",
       "to": "whisperwood_frostpine_border",
       "mode": "road",
-      "base_ticks": 15,
-      "bidirectional": true,
-      "notes": "Route from the Whisperwood Marches interior to the northern border."
+      "base_ticks": 360,
+      "bidirectional": true
     },
     {
-      "from": "Frostpine Reach",
+      "from": "frostpine_reach",
+      "to": "frostpine_whisperwood_border",
+      "mode": "road",
+      "base_ticks": 360,
+      "bidirectional": true
+    },
+    {
+      "from": "whisperwood_frostpine_border",
+      "to": "frostpine_whisperwood_border",
+      "mode": "road",
+      "base_ticks": 0,
+      "bidirectional": true
+    },
+    {
+      "from": "valemont_keep",
       "to": "whisperwood_frostpine_border",
       "mode": "road",
-      "base_ticks": 15,
-      "bidirectional": true,
-      "notes": "Route from Frostpine Reach's southern interior to the shared border."
+      "base_ticks": 360,
+      "bidirectional": true
+    },
+    {
+      "from": "valemont_keep",
+      "to": "whisperwood_marches",
+      "mode": "gate",
+      "base_ticks": 10,
+      "bidirectional": true
     }
   ]
 }

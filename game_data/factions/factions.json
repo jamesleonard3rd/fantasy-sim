@@ -35,6 +35,30 @@
       "kind": "school",
       "description": "Most prestigious university for mages on the continent.",
       "parent": null
+    },
+    {
+      "name": "House Valemont",
+      "kind": "house",
+      "description": "Valiant and noble house known for producing generals, marshals, and military leaders.",
+      "parent": null
+    },
+    {
+      "name": "House Belovar",
+      "kind": "house",
+      "description": "Noble house bound to an ancient arcane heritage through the bloodline of archmage Belovar the Great.",
+      "parent": null
+    },
+    {
+      "name": "House Rhaen",
+      "kind": "house",
+      "description": "Noble house with ancient ties to infernos or dragonkind, known for flame resistance and burning warcraft.",
+      "parent": "The Ember Court"
+    },
+    {
+      "name": "House Eidra",
+      "kind": "house",
+      "description": "Noble house tracing its lineage to Eidros the First, remembered for rare manifestations of radiant light magic.",
+      "parent": null
     }
   ]
 }

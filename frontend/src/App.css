@@ -1282,6 +1282,145 @@
   background: linear-gradient(90deg, var(--violet), var(--cyan));
 }
 
+.goal-progress-compact {
+  min-width: 0;
+  margin-top: 4px;
+}
+
+.goal-progress-compact progress {
+  width: 64px;
+  height: 6px;
+}
+
+.goal-nested-roots {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.goal-nested-block {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: rgba(8, 12, 28, 0.35);
+}
+
+.goal-nested-depth-0 {
+  margin-left: 0;
+}
+
+.goal-nested-depth-1 {
+  margin-left: 8px;
+}
+
+.goal-nested-depth-2 {
+  margin-left: 16px;
+}
+
+.goal-nested-depth-3 {
+  margin-left: 24px;
+}
+
+.goal-nested-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.goal-nested-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  font-weight: 600;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.goal-nested-remove {
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.goal-nested-remove:hover:not(:disabled) {
+  color: var(--text);
+  background: rgba(168, 85, 247, 0.12);
+}
+
+.goal-nested-payload {
+  margin-top: 4px;
+}
+
+.goal-nested-children {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.travel-segments {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px dashed rgba(168, 85, 247, 0.35);
+  border-radius: 8px;
+  background: rgba(8, 12, 28, 0.25);
+}
+
+.travel-segments-heading {
+  margin-bottom: 6px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  font-size: 10px;
+}
+
+.travel-segment {
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.travel-segment:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.travel-segment-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.travel-segment-label {
+  font-weight: 500;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.travel-segment-remove {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.travel-segment-remove:hover:not(:disabled) {
+  color: var(--text);
+  background: rgba(168, 85, 247, 0.12);
+}
+
+.travel-segment-meta {
+  margin-top: 2px;
+}
+
 .table-actions {
   position: absolute;
   top: 50%;

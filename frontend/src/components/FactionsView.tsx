@@ -34,6 +34,22 @@ function capitalize(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
+function orderPayloadValue(payload: unknown, key: string): string | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+  const value = (payload as Record<string, unknown>)[key];
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function orderRank(order: FactionDetail["orders"][number]): string {
+  return orderPayloadValue(order.payload, "rank") ?? "—";
+}
+
+function orderRankBucket(order: FactionDetail["orders"][number]): string {
+  return orderPayloadValue(order.payload, "rank_bucket") ?? "—";
+}
+
 function FactionDetailPanel({ faction }: { faction: FactionDetail }) {
   return (
     <div className="detail">
@@ -55,6 +71,7 @@ function FactionDetailPanel({ faction }: { faction: FactionDetail }) {
         <Field label="Parent" value={faction.parent_name ?? "—"} />
         <Field label="Members" value={faction.members.length} />
         <Field label="Sub-factions" value={faction.children.length} />
+        <Field label="Regions" value={faction.regions.length} />
       </div>
 
       {faction.house && (
@@ -139,6 +156,84 @@ function FactionDetailPanel({ faction }: { faction: FactionDetail }) {
               <li key={c.id}>{c.name}</li>
             ))}
           </ul>
+        )}
+      </Section>
+
+      <Section title={`Regions (${faction.regions.length})`}>
+        {faction.regions.length === 0 ? (
+          <span className="muted">No owned or controlled regions.</span>
+        ) : (
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Region</th>
+                <th>Type</th>
+                <th>Role</th>
+              </tr>
+            </thead>
+            <tbody>
+              {faction.regions.map((row) => (
+                <tr key={`${row.role}-${row.region_id}`}>
+                  <td>{row.region_name}</td>
+                  <td>{capitalize(row.region_type)}</td>
+                  <td>
+                    <Tag tone={row.role === "owner" ? "warning" : "info"}>
+                      {capitalize(row.role)}
+                    </Tag>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Section>
+
+      <Section title={`Orders (${faction.orders.length})`}>
+        {faction.orders.length === 0 ? (
+          <span className="muted">No recent orders.</span>
+        ) : (
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Order</th>
+                <th>Status</th>
+                <th>Member</th>
+                <th>Rank</th>
+                <th>Bucket</th>
+                <th>Target</th>
+                <th>Tick</th>
+              </tr>
+            </thead>
+            <tbody>
+              {faction.orders.map((o) => (
+                <tr key={o.id}>
+                  <td>{o.order_type}</td>
+                  <td>
+                    <Tag
+                      tone={
+                        o.status === "active"
+                          ? "warning"
+                          : o.status === "completed"
+                            ? "success"
+                            : o.status === "failed"
+                              ? "danger"
+                              : "neutral"
+                      }
+                    >
+                      {o.status}
+                    </Tag>
+                  </td>
+                  <td>{o.entity_name ?? "—"}</td>
+                  <td>{orderRank(o)}</td>
+                  <td>{orderRankBucket(o)}</td>
+                  <td>{o.region_name ?? "—"}</td>
+                  <td>
+                    {o.created_at_game_tick != null ? `t${o.created_at_game_tick}` : "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </Section>
 

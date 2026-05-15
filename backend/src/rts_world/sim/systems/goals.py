@@ -9,6 +9,7 @@ from ..state import PendingEvent, RegionState, TickContext
 
 ACTIVE_STATUSES = {"pending", "active", "paused"}
 TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
+MAX_ZERO_DURATION_TRAVEL_HOPS = 32
 
 
 def goal_score(goal: dict[str, Any], ctx: TickContext) -> float:
@@ -148,6 +149,23 @@ def _complete_goal(
     events.append(_event("goal.completed", goal, ctx, result=result))
 
 
+def _fail_goal(
+    state: RegionState,
+    goal: dict[str, Any],
+    ctx: TickContext,
+    events: list[PendingEvent],
+    *,
+    reason: str,
+    extra: dict[str, Any] | None = None,
+) -> None:
+    goal["active"] = False
+    goal["status"] = "failed"
+    goal["completed_at_game_tick"] = ctx.absolute_game_tick
+    state.mark_goal_dirty(goal.get("id"))
+    result = {"reason": reason, **(extra or {})}
+    events.append(_event("goal.failed", goal, ctx, result=result))
+
+
 def _execute_goal(
     state: RegionState,
     entity: dict[str, Any],
@@ -160,21 +178,80 @@ def _execute_goal(
         _advance_timed_goal(state, goal, ctx, events)
     elif goal_type == "wait_until":
         _advance_wait_until(state, goal, ctx, events)
+    elif goal_type == "travel_segment":
+        completed = _execute_travel_segment(state, entity, goal, ctx, events)
+        if completed:
+            _drain_zero_duration_travel_segments(state, entity, goal, ctx, events)
     elif goal_type == "travel_to_region":
+        payload = goal.get("payload") or {}
+        target_region_id = payload.get("region_id") or payload.get("target_region_id")
+
+        parent_gid = goal.get("id")
+        segment_children = [
+            g
+            for g in state.goals_by_entity_id.get(int(entity["id"]), [])
+            if g.get("parent_goal_id") == parent_gid and g.get("goal_type") == "travel_segment"
+        ]
+
+        if segment_children:
+            if target_region_id is not None and int(entity.get("region_id") or 0) == int(
+                target_region_id
+            ):
+                _complete_goal(
+                    state,
+                    goal,
+                    ctx,
+                    events,
+                    result={"region_id": int(target_region_id)},
+                )
+            return events
+
+        if target_region_id is not None and int(entity.get("region_id") or 0) == int(
+            target_region_id
+        ):
+            _complete_goal(
+                state,
+                goal,
+                ctx,
+                events,
+                result={"region_id": int(target_region_id)},
+            )
+            return events
+
+        if target_region_id is None:
+            _fail_goal(
+                state,
+                goal,
+                ctx,
+                events,
+                reason="missing_target_region",
+            )
+            return events
+
+        if goal.get("id") is None and goal.get("parent_goal_id") is not None:
+            return events
+
+        if "duration_ticks" not in payload:
+            _fail_goal(
+                state,
+                goal,
+                ctx,
+                events,
+                reason="no_route_no_duration",
+            )
+            return events
+
         completed = _advance_timed_goal(state, goal, ctx, events, emit_complete=False)
         if completed:
-            payload = goal.get("payload") or {}
-            target_region_id = payload.get("region_id") or payload.get("target_region_id")
-            if target_region_id is not None:
-                target_region_id_int = int(target_region_id)
-                target_region = state.regions_by_id.get(target_region_id_int)
-                entity["region_id"] = target_region_id_int
-                entity["zone"] = (
-                    str(target_region["name"])
-                    if target_region is not None
-                    else f"Region {target_region_id_int}"
-                )
-                state.mark_entity_dirty(int(entity["id"]))
+            target_region_id_int = int(target_region_id)
+            target_region = state.regions_by_id.get(target_region_id_int)
+            entity["region_id"] = target_region_id_int
+            entity["zone"] = (
+                str(target_region["name"])
+                if target_region is not None
+                else f"Region {target_region_id_int}"
+            )
+            state.mark_entity_dirty(int(entity["id"]))
             _complete_goal(
                 state,
                 goal,
@@ -206,18 +283,106 @@ def _advance_timed_goal(
     *,
     emit_complete: bool = True,
 ) -> bool:
-    payload = goal.get("payload") or {}
-    duration = max(1, int(payload.get("duration_ticks", 1)))
+    duration = _duration_ticks(goal)
     started = goal.get("started_at_game_tick")
     started_tick = int(started) if started is not None else ctx.absolute_game_tick
     elapsed = max(1, ctx.absolute_game_tick - started_tick + 1)
-    goal["progress"] = min(100.0, (elapsed / duration) * 100.0)
+    goal["progress"] = 100.0 if duration == 0 else min(100.0, (elapsed / duration) * 100.0)
     state.mark_goal_dirty(goal.get("id"))
     if float(goal["progress"]) < 100.0:
         return False
     if emit_complete:
         _complete_goal(state, goal, ctx, events)
     return True
+
+
+def _duration_ticks(goal: dict[str, Any]) -> int:
+    payload = goal.get("payload") or {}
+    return max(0, int(payload.get("duration_ticks", 1)))
+
+
+def _execute_travel_segment(
+    state: RegionState,
+    entity: dict[str, Any],
+    goal: dict[str, Any],
+    ctx: TickContext,
+    events: list[PendingEvent],
+) -> bool:
+    completed = _advance_timed_goal(state, goal, ctx, events, emit_complete=False)
+    if not completed:
+        return False
+
+    payload = goal.get("payload") or {}
+    to_id = payload.get("to_region_id")
+    if to_id is not None:
+        to_int = int(to_id)
+        target_region = state.regions_by_id.get(to_int)
+        to_name = payload.get("to_name")
+        entity["region_id"] = to_int
+        entity["zone"] = (
+            str(to_name)
+            if isinstance(to_name, str) and to_name
+            else (
+                str(target_region["name"])
+                if target_region is not None
+                else f"Region {to_int}"
+            )
+        )
+        state.mark_entity_dirty(int(entity["id"]))
+    _complete_goal(
+        state,
+        goal,
+        ctx,
+        events,
+        result={"to_region_id": to_id},
+    )
+    return True
+
+
+def _drain_zero_duration_travel_segments(
+    state: RegionState,
+    entity: dict[str, Any],
+    completed_segment: dict[str, Any],
+    ctx: TickContext,
+    events: list[PendingEvent],
+) -> None:
+    current = completed_segment
+    for _ in range(MAX_ZERO_DURATION_TRAVEL_HOPS):
+        next_segment = _next_zero_duration_travel_segment(state, entity, current)
+        if next_segment is None:
+            return
+        if not bool(next_segment.get("active")):
+            _activate_goal(state, next_segment, ctx, events)
+        if not _execute_travel_segment(state, entity, next_segment, ctx, events):
+            return
+        current = next_segment
+    events.append(_event("goal.zero_duration_travel_guard", current, ctx))
+
+
+def _next_zero_duration_travel_segment(
+    state: RegionState,
+    entity: dict[str, Any],
+    current: dict[str, Any],
+) -> dict[str, Any] | None:
+    parent_id = current.get("parent_goal_id")
+    if parent_id is None:
+        return None
+
+    goals = state.goals_by_entity_id.get(int(entity["id"]), [])
+    parent = next((g for g in goals if g.get("id") == parent_id), None)
+    if parent is None or str(parent.get("completion_mode", "ordered")) != "ordered":
+        return None
+
+    children = _children_by_parent(goals).get(int(parent_id), [])
+    for child in children:
+        if child.get("status") in TERMINAL_STATUSES:
+            continue
+        if child.get("goal_type") != "travel_segment":
+            return None
+        if _duration_ticks(child) != 0:
+            return None
+        return child
+    return None
 
 
 def _advance_wait_until(

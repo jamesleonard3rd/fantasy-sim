@@ -31,8 +31,9 @@ def default_systems() -> Sequence[System]:
     here and inserting it in dependency order.
     """
     from .heartbeat import heartbeat  # local import keeps package import cheap
+    from .factions import faction_behavior
     from .goals import goal_brain
     from .relationships import relationship_dynamics
     from .tournaments import tournament_system
 
-    return (relationship_dynamics, goal_brain, tournament_system, heartbeat)
+    return (relationship_dynamics, faction_behavior, goal_brain, tournament_system, heartbeat)

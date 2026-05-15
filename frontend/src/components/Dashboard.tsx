@@ -82,7 +82,7 @@ function Dashboard({
     };
 
     loadTidings();
-    const id = window.setInterval(loadTidings, 5000);
+    const id = window.setInterval(loadTidings, 1000);
     return () => {
       cancelled = true;
       window.clearInterval(id);

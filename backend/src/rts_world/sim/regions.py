@@ -30,7 +30,7 @@ def get_region(conn: psycopg.Connection, region_id: int) -> dict[str, Any] | Non
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT id, name, type, parent_id, tick_interval_seconds,
+            SELECT id, key, name, type, parent_id, tick_interval_seconds,
                    last_tick_at, paused
               FROM regions
              WHERE id = %s
@@ -42,19 +42,20 @@ def get_region(conn: psycopg.Connection, region_id: int) -> dict[str, Any] | Non
             return None
         return {
             "id": int(row[0]),
-            "name": row[1],
-            "type": row[2],
-            "parent_id": int(row[3]) if row[3] is not None else None,
-            "tick_interval_seconds": int(row[4]),
-            "last_tick_at": row[5],
-            "paused": bool(row[6]),
+            "key": row[1],
+            "name": row[2],
+            "type": row[3],
+            "parent_id": int(row[4]) if row[4] is not None else None,
+            "tick_interval_seconds": int(row[5]),
+            "last_tick_at": row[6],
+            "paused": bool(row[7]),
         }
 
 
 def query_due_regions(
     conn: psycopg.Connection, *, now: datetime
 ) -> list[dict[str, Any]]:
-    """Regions that are unpaused AND whose next tick is due at or before ``now``.
+    """Root regions that are unpaused AND whose next tick is due at or before ``now``.
 
     Used by the scheduler on startup and during periodic refresh. The runtime
     loop normally pops directly from its in-memory heap; this is the
@@ -66,6 +67,7 @@ def query_due_regions(
             SELECT id, name, tick_interval_seconds, last_tick_at
               FROM regions
              WHERE paused = FALSE
+               AND parent_id IS NULL
                AND (last_tick_at IS NULL
                     OR last_tick_at + (tick_interval_seconds * INTERVAL '1 second') <= %s)
              ORDER BY last_tick_at NULLS FIRST
@@ -84,13 +86,14 @@ def query_due_regions(
 
 
 def list_unpaused_regions(conn: psycopg.Connection) -> list[dict[str, Any]]:
-    """All unpaused regions, with the fields the scheduler needs to schedule them."""
+    """Unpaused root regions, with the fields the scheduler needs to schedule them."""
     with conn.cursor() as cur:
         cur.execute(
             """
             SELECT id, name, tick_interval_seconds, last_tick_at
               FROM regions
              WHERE paused = FALSE
+               AND parent_id IS NULL
              ORDER BY id
             """
         )
@@ -127,6 +130,28 @@ def update_last_tick_at(
         )
 
 
+def _sim_region_ids(conn: psycopg.Connection, region_id: int) -> list[int]:
+    """Return a root region plus all unpaused descendants that tick with it."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            WITH RECURSIVE sim_regions AS (
+                SELECT id
+                  FROM regions
+                 WHERE id = %s
+                UNION ALL
+                SELECT child.id
+                  FROM regions child
+                  JOIN sim_regions parent ON child.parent_id = parent.id
+                 WHERE child.paused = FALSE
+            )
+            SELECT id FROM sim_regions
+            """,
+            (region_id,),
+        )
+        return [int(row[0]) for row in cur.fetchall()]
+
+
 # ---------- working set load ----------
 
 def load_region_state(conn: psycopg.Connection, region_id: int) -> RegionState | None:
@@ -144,11 +169,12 @@ def load_region_state(conn: psycopg.Connection, region_id: int) -> RegionState |
         return None
 
     state = RegionState(region=region)
+    sim_region_ids = _sim_region_ids(conn, region_id)
 
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT id, name, type, parent_id
+            SELECT id, key, name, type, parent_id
               FROM regions
              ORDER BY id
             """
@@ -156,10 +182,53 @@ def load_region_state(conn: psycopg.Connection, region_id: int) -> RegionState |
         for row in cur.fetchall():
             state.regions_by_id[int(row[0])] = {
                 "id": int(row[0]),
-                "name": row[1],
-                "type": row[2],
-                "parent_id": int(row[3]) if row[3] is not None else None,
+                "key": row[1],
+                "name": row[2],
+                "type": row[3],
+                "parent_id": int(row[4]) if row[4] is not None else None,
             }
+
+        # Region control: which factions own/control regions in this sim scope.
+        cur.execute(
+            """
+            SELECT region_id, role, faction_id, since_game_tick, updated_at
+              FROM region_control
+             WHERE region_id = ANY(%s)
+             ORDER BY region_id, role
+            """,
+            (sim_region_ids,),
+        )
+        for row in cur.fetchall():
+            state.add_region_control(
+                {
+                    "region_id": int(row[0]),
+                    "role": row[1],
+                    "faction_id": int(row[2]),
+                    "since_game_tick": int(row[3]) if row[3] is not None else None,
+                    "updated_at": row[4],
+                }
+            )
+
+        faction_ids = sorted({int(r["faction_id"]) for r in state.region_control})
+        if faction_ids:
+            cur.execute(
+                """
+                SELECT id, name, kind, parent_id
+                  FROM factions
+                 WHERE id = ANY(%s)
+                 ORDER BY name
+                """,
+                (faction_ids,),
+            )
+            for row in cur.fetchall():
+                state.add_faction(
+                    {
+                        "id": int(row[0]),
+                        "name": row[1],
+                        "kind": row[2],
+                        "parent_id": int(row[3]) if row[3] is not None else None,
+                    }
+                )
 
         cur.execute("SELECT to_regclass('public.tournament_instances')")
         tournament_table = cur.fetchone()
@@ -173,11 +242,11 @@ def load_region_state(conn: psycopg.Connection, region_id: int) -> RegionState |
                        winner_entity_id, payload, created_at, updated_at,
                        completed_at_game_tick
                   FROM tournament_instances
-                 WHERE region_id = %s
+                 WHERE region_id = ANY(%s)
                    AND status NOT IN ('completed', 'cancelled')
                  ORDER BY starts_at_game_tick, id
                 """,
-                (region_id,),
+                (sim_region_ids,),
             )
             for row in cur.fetchall():
                 tournament = {
@@ -228,18 +297,18 @@ def load_region_state(conn: psycopg.Connection, region_id: int) -> RegionState |
                     }
                     state.add_tournament_participant(participant)
 
-        # Entities currently zoned to this region. The wide SELECT pattern: one
-        # round-trip, no per-entity follow-ups.
+        # Entities currently zoned to this region or any unpaused subregion.
+        # The wide SELECT pattern: one round-trip, no per-entity follow-ups.
         cur.execute(
             """
             SELECT e.id, e.name, e.type, e.race_id, e.subrace_id, e.created_at,
                    z.zone, z.region_id
               FROM entities e
               JOIN entity_zones z ON z.entity_id = e.id
-             WHERE z.region_id = %s
+             WHERE z.region_id = ANY(%s)
              ORDER BY e.id
             """,
-            (region_id,),
+            (sim_region_ids,),
         )
         for row in cur.fetchall():
             ent: dict[str, object] = {
@@ -257,6 +326,63 @@ def load_region_state(conn: psycopg.Connection, region_id: int) -> RegionState |
 
         if state.entities_by_id:
             ids = tuple(state.entities_by_id.keys())
+
+            # Unified membership rank signal for factions relevant to this region scope.
+            if state.factions_by_id:
+                faction_ids = list(state.factions_by_id.keys())
+
+                cur.execute(
+                    """
+                    SELECT ef.entity_id, ef.faction_id, ef.rank, f.kind
+                      FROM entity_factions ef
+                      JOIN factions f ON f.id = ef.faction_id
+                     WHERE ef.entity_id  = ANY(%s)
+                       AND ef.faction_id = ANY(%s)
+                    """,
+                    (list(ids), faction_ids),
+                )
+                for row in cur.fetchall():
+                    state.add_member(
+                        {
+                            "entity_id": int(row[0]),
+                            "faction_id": int(row[1]),
+                            "rank": row[2],
+                            "source": "house" if row[3] == "house" else "faction",
+                        }
+                    )
+
+                cur.execute(
+                    """
+                    SELECT id, faction_id, entity_id, region_id, order_type, status,
+                           payload, created_at_game_tick, completed_at_game_tick,
+                           created_at, updated_at
+                      FROM faction_orders
+                     WHERE faction_id = ANY(%s)
+                       AND status = 'active'
+                     ORDER BY id
+                    """,
+                    (faction_ids,),
+                )
+                for row in cur.fetchall():
+                    state.add_faction_order(
+                        {
+                            "id": int(row[0]),
+                            "faction_id": int(row[1]),
+                            "entity_id": int(row[2]) if row[2] is not None else None,
+                            "region_id": int(row[3]) if row[3] is not None else None,
+                            "order_type": row[4],
+                            "status": row[5],
+                            "payload": row[6] or {},
+                            "created_at_game_tick": (
+                                int(row[7]) if row[7] is not None else None
+                            ),
+                            "completed_at_game_tick": (
+                                int(row[8]) if row[8] is not None else None
+                            ),
+                            "created_at": row[9],
+                            "updated_at": row[10],
+                        }
+                    )
             cur.execute(
                 """
                 SELECT id, entity_id, parent_goal_id, goal_type, status,
@@ -545,6 +671,81 @@ def write_region_state(
             )
         summary["goals_inserted"] = len(new_goal_rows)
 
+    # Faction orders: update dirty existing rows, then insert new rows.
+    if state.dirty_faction_order_ids:
+        by_id = {
+            int(order["id"]): order
+            for order in state.faction_orders
+            if order.get("id") is not None
+        }
+        rows = []
+        for oid in state.dirty_faction_order_ids:
+            order = by_id.get(oid)
+            if order is None:
+                continue
+            rows.append(
+                (
+                    order.get("entity_id"),
+                    order.get("region_id"),
+                    order.get("order_type"),
+                    order.get("status", "active"),
+                    json.dumps(order.get("payload") or {}),
+                    order.get("created_at_game_tick"),
+                    order.get("completed_at_game_tick"),
+                    oid,
+                )
+            )
+        if rows:
+            with conn.cursor() as cur:
+                cur.executemany(
+                    """
+                    UPDATE faction_orders
+                       SET entity_id = %s,
+                           region_id = %s,
+                           order_type = %s,
+                           status = %s,
+                           payload = %s::jsonb,
+                           created_at_game_tick = %s,
+                           completed_at_game_tick = %s,
+                           updated_at = NOW()
+                     WHERE id = %s
+                    """,
+                    rows,
+                )
+            summary["faction_orders_updated"] = len(rows)
+
+    new_order_rows = [
+        (
+            int(order["faction_id"]),
+            order.get("entity_id"),
+            order.get("region_id"),
+            order["order_type"],
+            order.get("status", "active"),
+            json.dumps(order.get("payload") or {}),
+            order.get("created_at_game_tick"),
+            order.get("completed_at_game_tick"),
+        )
+        for order in state.faction_orders
+        if order.get("id") is None
+    ]
+    if new_order_rows:
+        with conn.cursor() as cur:
+            cur.executemany(
+                """
+                INSERT INTO faction_orders (
+                    faction_id, entity_id, region_id, order_type, status, payload,
+                    created_at_game_tick, completed_at_game_tick,
+                    created_at, updated_at
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s::jsonb,
+                    %s, %s,
+                    NOW(), NOW()
+                )
+                """,
+                new_order_rows,
+            )
+        summary["faction_orders_inserted"] = len(new_order_rows)
+
     # Entities: mutable simulation state currently lives in component tables.
     # Goal execution uses this path to move an entity between regions.
     if state.dirty_entity_ids:
@@ -674,26 +875,28 @@ def write_region_state(
 def upsert_region(
     conn: psycopg.Connection,
     *,
+    key: str,
     name: str,
     region_type: str = "region",
     parent_id: int | None = None,
     tick_interval_seconds: int = 180,
     paused: bool = False,
 ) -> int:
-    """Create a region by name if it doesn't exist; return its id."""
+    """Create a region by stable key if it doesn't exist; return its id."""
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO regions (name, type, parent_id, tick_interval_seconds, paused)
-            VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT (name) DO UPDATE
-                SET type = EXCLUDED.type,
+            INSERT INTO regions (key, name, type, parent_id, tick_interval_seconds, paused)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (key) DO UPDATE
+                SET name = EXCLUDED.name,
+                    type = EXCLUDED.type,
                     parent_id = EXCLUDED.parent_id,
                     tick_interval_seconds = EXCLUDED.tick_interval_seconds,
                     paused = EXCLUDED.paused
             RETURNING id
             """,
-            (name, region_type, parent_id, tick_interval_seconds, paused),
+            (key, name, region_type, parent_id, tick_interval_seconds, paused),
         )
         row = cur.fetchone()
         assert row is not None
@@ -715,4 +918,36 @@ def assign_entity_to_region(
                     updated_at = NOW()
             """,
             (entity_id, zone_label, region_id),
+        )
+
+
+def set_region_control(
+    conn: psycopg.Connection,
+    region_id: int,
+    faction_id: int,
+    *,
+    role: str,
+    since_game_tick: int | None = None,
+) -> None:
+    """Assign owner/controller for a region."""
+    if role not in {"owner", "controller"}:
+        raise ValueError(f"unsupported region control role: {role}")
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO region_control (
+                region_id, role, faction_id, since_game_tick, updated_at
+            )
+            VALUES (%s, %s, %s, %s, NOW())
+            ON CONFLICT (region_id, role) DO UPDATE
+                SET faction_id = EXCLUDED.faction_id,
+                    since_game_tick = EXCLUDED.since_game_tick,
+                    updated_at = NOW()
+            """,
+            (
+                region_id,
+                role,
+                faction_id,
+                since_game_tick,
+            ),
         )

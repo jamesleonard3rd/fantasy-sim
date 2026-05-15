@@ -28,11 +28,11 @@ def isolated_region(db_conn):
     with db_conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO regions (name, type, tick_interval_seconds)
-            VALUES (%s, 'region', 180)
+            INSERT INTO regions (key, name, type, tick_interval_seconds)
+            VALUES (%s, %s, 'region', 180)
             RETURNING id
             """,
-            (name,),
+            (name, name),
         )
         row = cur.fetchone()
         assert row is not None
@@ -133,6 +133,125 @@ def test_load_region_state_returns_none_for_unknown(db_conn):
     assert state is None
 
 
+def test_list_unpaused_regions_excludes_subregions(db_conn):
+    from rts_world.sim.regions import list_unpaused_regions
+
+    parent_name = f"__test_parent_region_{os.getpid()}_{uuid.uuid4().hex[:8]}"
+    child_name = f"__test_child_region_{os.getpid()}_{uuid.uuid4().hex[:8]}"
+    parent_id: int | None = None
+    child_id: int | None = None
+
+    try:
+        with db_conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO regions (key, name, type, tick_interval_seconds)
+                VALUES (%s, %s, 'region', 180)
+                RETURNING id
+                """,
+                (parent_name, parent_name),
+            )
+            parent_row = cur.fetchone()
+            assert parent_row is not None
+            parent_id = int(parent_row[0])
+
+            cur.execute(
+                """
+                INSERT INTO regions (key, name, type, parent_id, tick_interval_seconds)
+                VALUES (%s, %s, 'border', %s, 180)
+                RETURNING id
+                """,
+                (child_name, child_name, parent_id),
+            )
+            child_row = cur.fetchone()
+            assert child_row is not None
+            child_id = int(child_row[0])
+        db_conn.commit()
+
+        listed_ids = {int(region["id"]) for region in list_unpaused_regions(db_conn)}
+
+        assert parent_id in listed_ids
+        assert child_id not in listed_ids
+    finally:
+        db_conn.rollback()
+        with db_conn.cursor() as cur:
+            if child_id is not None:
+                cur.execute("DELETE FROM world_events WHERE region_id = %s", (child_id,))
+                cur.execute("DELETE FROM regions WHERE id = %s", (child_id,))
+            if parent_id is not None:
+                cur.execute("DELETE FROM world_events WHERE region_id = %s", (parent_id,))
+                cur.execute("DELETE FROM regions WHERE id = %s", (parent_id,))
+        db_conn.commit()
+
+
+def test_load_region_state_includes_entities_in_subregions(db_conn, isolated_region):
+    from rts_world.sim.regions import load_region_state
+
+    parent_id = int(isolated_region["id"])
+    child_name = f"__test_child_region_{os.getpid()}_{uuid.uuid4().hex[:8]}"
+    race_name = f"__test_subregion_race_{os.getpid()}_{uuid.uuid4().hex[:8]}"
+    child_id: int | None = None
+    race_id: int | None = None
+    entity_id: int | None = None
+
+    try:
+        with db_conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO regions (key, name, type, parent_id, tick_interval_seconds)
+                VALUES (%s, %s, 'border', %s, 180)
+                RETURNING id
+                """,
+                (child_name, child_name, parent_id),
+            )
+            child_row = cur.fetchone()
+            assert child_row is not None
+            child_id = int(child_row[0])
+
+            cur.execute("INSERT INTO races (name) VALUES (%s) RETURNING id", (race_name,))
+            race_row = cur.fetchone()
+            assert race_row is not None
+            race_id = int(race_row[0])
+
+            cur.execute(
+                """
+                INSERT INTO entities (name, type, race_id)
+                VALUES ('Subregion Tester', 'humanoid', %s)
+                RETURNING id
+                """,
+                (race_id,),
+            )
+            entity_row = cur.fetchone()
+            assert entity_row is not None
+            entity_id = int(entity_row[0])
+
+            cur.execute(
+                """
+                INSERT INTO entity_zones (entity_id, zone, region_id)
+                VALUES (%s, %s, %s)
+                """,
+                (entity_id, child_name, child_id),
+            )
+        db_conn.commit()
+
+        state = load_region_state(db_conn, parent_id)
+
+        assert state is not None
+        assert entity_id in state.entities_by_id
+        assert state.entities_by_id[entity_id]["region_id"] == child_id
+    finally:
+        db_conn.rollback()
+        with db_conn.cursor() as cur:
+            if entity_id is not None:
+                cur.execute("DELETE FROM entities WHERE id = %s", (entity_id,))
+            if child_id is not None:
+                cur.execute("DELETE FROM world_events WHERE region_id = %s", (child_id,))
+                cur.execute("DELETE FROM regions WHERE id = %s", (child_id,))
+            if race_id is not None:
+                cur.execute("DELETE FROM races WHERE id = %s", (race_id,))
+        db_conn.commit()
+
+
 def test_tick_region_executes_persisted_travel_goal(db_conn, isolated_region):
     from rts_world.sim.tick import tick_region
 
@@ -157,11 +276,11 @@ def test_tick_region_executes_persisted_travel_goal(db_conn, isolated_region):
 
             cur.execute(
                 """
-                INSERT INTO regions (name, type, tick_interval_seconds)
-                VALUES (%s, 'region', 180)
+                INSERT INTO regions (key, name, type, tick_interval_seconds)
+                VALUES (%s, %s, 'region', 180)
                 RETURNING id
                 """,
-                (target_name,),
+                (target_name, target_name),
             )
             target_row = cur.fetchone()
             assert target_row is not None

@@ -79,10 +79,7 @@ def insert_entity_house(
     role: str | None,
     house_lookup: Dict[str, int],
 ) -> None:
-    """Set the entity's house. Each entity has at most one house — the PK on
-    `entity_houses(entity_id)` enforces it, and an upsert on the same key
-    means re-seeding cleanly switches an entity's house if templates change.
-    """
+    """Set the entity's house as a house faction membership."""
     if not house_name:
         return
     house_id = house_lookup.get(house_name)
@@ -94,11 +91,21 @@ def insert_entity_house(
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO entity_houses (entity_id, house_id, role)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (entity_id) DO UPDATE
-                SET house_id = EXCLUDED.house_id,
-                    role     = EXCLUDED.role
+            DELETE FROM entity_factions ef
+            USING factions f
+            WHERE ef.faction_id = f.id
+              AND f.kind = 'house'
+              AND ef.entity_id = %s
+              AND ef.faction_id <> %s
+            """,
+            (entity_id, house_id),
+        )
+        cur.execute(
+            """
+            INSERT INTO entity_factions (entity_id, faction_id, rank, reputation)
+            VALUES (%s, %s, %s, 0)
+            ON CONFLICT (entity_id, faction_id) DO UPDATE
+                SET rank = EXCLUDED.rank
             """,
             (entity_id, house_id, role or "member"),
         )

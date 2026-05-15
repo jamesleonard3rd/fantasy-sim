@@ -13,6 +13,7 @@ import type {
   Trait,
 } from "../types";
 import { MasterDetail } from "./MasterDetail";
+import { TravelRoutePreview } from "./TravelRoutePreview";
 import { ErrorBox, Field, Section, Tag, formatDate } from "./common";
 
 function EntitiesView({ refreshKey }: { refreshKey: number }) {
@@ -26,8 +27,8 @@ function EntitiesView({ refreshKey }: { refreshKey: number }) {
       getSubtitle={(e) => {
         const lineage = [e.race, e.subrace].filter(Boolean).join(" · ");
         if (e.house_name) {
-          const role = e.house_role ? ` (${e.house_role})` : "";
-          return `${e.house_name}${role}${lineage ? ` · ${lineage}` : ""}`;
+          const rank = e.house_rank ? ` (${e.house_rank})` : "";
+          return `${e.house_name}${rank}${lineage ? ` · ${lineage}` : ""}`;
         }
         return lineage || e.type;
       }}
@@ -63,6 +64,7 @@ function EntityDetailPanel({ entity }: { entity: EntityDetail }) {
   const [selectedRegionId, setSelectedRegionId] = useState("");
   const [selectedGoalType, setSelectedGoalType] = useState("");
   const [goalPayloadJson, setGoalPayloadJson] = useState("{}");
+  const [travelDestRegionId, setTravelDestRegionId] = useState("");
 
   useEffect(() => {
     setCurrent(entity);
@@ -93,6 +95,12 @@ function EntityDetailPanel({ entity }: { entity: EntityDetail }) {
     };
   }, []);
 
+  useEffect(() => {
+    if (selectedGoalType !== "travel_to_region") {
+      setTravelDestRegionId("");
+    }
+  }, [selectedGoalType]);
+
   const availableTraits = useMemo(() => {
     const existing = new Set(current.traits.map((t) => t.id));
     return (lookups?.traits ?? []).filter((trait) => !existing.has(trait.id));
@@ -107,7 +115,10 @@ function EntityDetailPanel({ entity }: { entity: EntityDetail }) {
   }, [current.factions, lookups]);
 
   const visibleFactions = useMemo(
-    () => current.factions.filter((faction) => faction.kind !== "school"),
+    () =>
+      current.factions.filter(
+        (faction) => faction.kind !== "school" && faction.kind !== "house",
+      ),
     [current.factions],
   );
 
@@ -135,6 +146,8 @@ function EntityDetailPanel({ entity }: { entity: EntityDetail }) {
 
   const goals = current.goals ?? [];
 
+  const { rootGoals, goalsByParent } = useMemo(() => buildGoalHierarchy(goals), [goals]);
+
   const availableGoalTemplates = lookups?.goalTemplates ?? [];
 
   const selectedGoalTemplate = useMemo(
@@ -143,9 +156,12 @@ function EntityDetailPanel({ entity }: { entity: EntityDetail }) {
   );
 
   const selectedGoalTemplateHint = useMemo(() => {
+    if (selectedGoalType === "travel_to_region") {
+      return 'Optional JSON for extras only, e.g. {"duration_ticks": 10} (use {} if not needed).';
+    }
     if (!selectedGoalTemplate?.requires?.length) return undefined;
     return `Requires payload fields: ${selectedGoalTemplate.requires.join(", ")}`;
-  }, [selectedGoalTemplate]);
+  }, [selectedGoalTemplate, selectedGoalType]);
 
   const runEdit = async (operation: () => Promise<EntityDetail>) => {
     setBusy(true);
@@ -233,6 +249,15 @@ function EntityDetailPanel({ entity }: { entity: EntityDetail }) {
         return;
       }
     }
+    if (selectedGoalType === "travel_to_region") {
+      const rid = Number(travelDestRegionId);
+      if (!Number.isFinite(rid) || rid <= 0) {
+        setError("Choose a destination region.");
+        return;
+      }
+      payload = { ...payload, region_id: rid };
+      delete payload.target_region_id;
+    }
     const missing = selectedGoalTemplate.requires.filter(
       (field) => payload[field] === undefined || payload[field] === null,
     );
@@ -249,6 +274,7 @@ function EntityDetailPanel({ entity }: { entity: EntityDetail }) {
     );
     setSelectedGoalType("");
     setGoalPayloadJson("{}");
+    setTravelDestRegionId("");
   };
 
   const saveZone = () => {
@@ -287,7 +313,7 @@ function EntityDetailPanel({ entity }: { entity: EntityDetail }) {
             current.house ? (
               <span>
                 {current.house.name}{" "}
-                <span className="muted small">({current.house.role})</span>
+                <span className="muted small">({current.house.rank})</span>
               </span>
             ) : (
               "—"
@@ -353,7 +379,7 @@ function EntityDetailPanel({ entity }: { entity: EntityDetail }) {
             <thead>
               <tr>
                 <th>House</th>
-                <th>Role</th>
+                <th>Rank</th>
                 <th>Type</th>
                 <th>Joined</th>
               </tr>
@@ -363,7 +389,7 @@ function EntityDetailPanel({ entity }: { entity: EntityDetail }) {
                 <tr key={h.id}>
                   <td>{h.name}</td>
                   <td>
-                    <Tag tone={houseRoleTone(h.role)}>{h.role}</Tag>
+                    <Tag tone={houseRankTone(h.rank)}>{h.rank}</Tag>
                   </td>
                   <td>{h.type ?? "—"}</td>
                   <td>{formatDate(h.joined_at)}</td>
@@ -375,7 +401,7 @@ function EntityDetailPanel({ entity }: { entity: EntityDetail }) {
       )}
 
       <Section
-        title={`Goals (${goals.length})`}
+        title={`Goals (${rootGoals.length})`}
         actions={
           <div className="add-control add-control-goals">
             <select
@@ -391,13 +417,34 @@ function EntityDetailPanel({ entity }: { entity: EntityDetail }) {
                 </option>
               ))}
             </select>
+            {selectedGoalType === "travel_to_region" && lookups && (
+              <select
+                value={travelDestRegionId}
+                onChange={(event) => setTravelDestRegionId(event.target.value)}
+                disabled={busy || availableGoalTemplates.length === 0}
+                title="Destination region"
+              >
+                <option value="">Destination region…</option>
+                {[...lookups.regions]
+                  .sort((a, b) => a.name.localeCompare(b.name))
+                  .map((r) => (
+                    <option key={r.id} value={String(r.id)}>
+                      {r.name}
+                    </option>
+                  ))}
+              </select>
+            )}
             <textarea
               className="add-control-payload"
               rows={1}
               value={goalPayloadJson}
               onChange={(event) => setGoalPayloadJson(event.target.value)}
               disabled={busy || !lookups || availableGoalTemplates.length === 0}
-              placeholder='Payload JSON, e.g. {"faction_id": 1, "target_region_id": 2}'
+              placeholder={
+                selectedGoalType === "travel_to_region"
+                  ? 'Optional: {"duration_ticks": 10}'
+                  : 'Payload JSON, e.g. {"faction_id": 1, "target_region_id": 2}'
+              }
               spellCheck={false}
             />
             <button
@@ -424,70 +471,134 @@ function EntityDetailPanel({ entity }: { entity: EntityDetail }) {
         {goals.length === 0 ? (
           <span className="muted">No goals assigned.</span>
         ) : (
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Goal</th>
-                <th>Status</th>
-                <th>Priority</th>
-                <th>Progress</th>
-                <th>Timing</th>
-                <th className="table-actions-heading" />
-              </tr>
-            </thead>
-            <tbody>
-              {goals.map((goal) => {
-                const payloadSummary = formatGoalPayload(goal.payload);
-                return (
-                  <tr key={goal.id}>
-                    <td>
-                      <div>{formatGoalType(goal.goal_type)}</div>
-                      <div className="muted small">
-                        #{goal.id}
-                        {goal.parent_goal_id ? ` · child of #${goal.parent_goal_id}` : ""}
-                        {goal.completion_mode ? ` · ${goal.completion_mode}` : ""}
-                      </div>
-                      {payloadSummary && (
-                        <div className="muted small">{payloadSummary}</div>
-                      )}
-                    </td>
-                    <td>
-                      <Tag tone={goalStatusTone(goal.status)}>
-                        {goal.active ? "active" : goal.status}
-                      </Tag>
-                    </td>
-                    <td>
-                      <div>{goal.priority}</div>
-                      <div className="muted small">Urgency {goal.urgency}</div>
-                    </td>
-                    <td>
-                      <div className="goal-progress">
-                        <progress max={100} value={goal.progress} />
-                        <span>{formatGoalProgress(goal.progress)}</span>
-                      </div>
-                    </td>
-                    <td>{formatGoalTiming(goal)}</td>
-                    <td className="table-actions">
-                      <button
-                        type="button"
-                        disabled={busy}
-                        aria-label={`Remove goal ${goal.goal_type}`}
-                        onClick={() =>
-                          void runEdit(() =>
-                            apiDelete<EntityDetail>(
-                              `/entities/${current.id}/goals/${goal.id}`,
-                            ),
-                          )
-                        }
-                      >
-                        x
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <>
+            {goals.length !== rootGoals.length && (
+              <p className="muted small">
+                Showing {rootGoals.length} root goal{rootGoals.length === 1 ? "" : "s"} (
+                {goals.length} rows including nested steps).
+              </p>
+            )}
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Goal</th>
+                  <th>Status</th>
+                  <th>Priority</th>
+                  <th>Progress</th>
+                  <th>Timing</th>
+                  <th className="table-actions-heading" />
+                </tr>
+              </thead>
+              <tbody>
+                {rootGoals.map((goal) => {
+                  const payloadSummary =
+                    goal.goal_type === "travel_to_region"
+                      ? formatTravelToRegionDestination(goal, lookups?.regions)
+                      : formatGoalPayload(goal.payload);
+                  const nested = goalsByParent.get(goal.id) ?? [];
+                  const nestedSteps = nested.filter(
+                    (child) => child.goal_type !== "travel_segment",
+                  );
+                  const travelSegmentsForGoal = nested.filter(
+                    (child) => child.goal_type === "travel_segment",
+                  );
+                  return (
+                    <tr key={goal.id}>
+                      <td>
+                        <div>{formatGoalType(goal.goal_type)}</div>
+                        <div className="muted small">
+                          #{goal.id}
+                          {goal.completion_mode ? ` · ${goal.completion_mode}` : ""}
+                        </div>
+                        {payloadSummary && (
+                          <div className="muted small">{payloadSummary}</div>
+                        )}
+                        {goal.goal_type === "travel_to_region" && (
+                          <TravelRoutePreview
+                            goalId={goal.id}
+                            previewFromRegionId={current.zone?.region_id ?? null}
+                            targetRegionId={
+                              getPayloadNumber(goal.payload, "region_id") ??
+                              getPayloadNumber(goal.payload, "target_region_id")
+                            }
+                            travelSegments={travelSegmentsForGoal}
+                          />
+                        )}
+                        {goal.goal_type === "travel_to_region" && (
+                          <TravelSegmentsList
+                            parentId={goal.id}
+                            goalsByParent={goalsByParent}
+                            busy={busy}
+                            onRemoveGoal={(goalId) =>
+                              void runEdit(() =>
+                                apiDelete<EntityDetail>(
+                                  `/entities/${current.id}/goals/${goalId}`,
+                                ),
+                              )
+                            }
+                          />
+                        )}
+                        {nestedSteps.length > 0 && (
+                          <div className="goal-nested-roots">
+                            {nestedSteps.map((child) => (
+                                <GoalNestedBlock
+                                  key={child.id}
+                                  goal={child}
+                                  goalsByParent={goalsByParent}
+                                  depth={0}
+                                  busy={busy}
+                                  entityZoneRegionId={current.zone?.region_id ?? null}
+                                  regions={lookups?.regions}
+                                  onRemoveGoal={(goalId) =>
+                                    void runEdit(() =>
+                                      apiDelete<EntityDetail>(
+                                        `/entities/${current.id}/goals/${goalId}`,
+                                      ),
+                                    )
+                                  }
+                                />
+                              ))}
+                          </div>
+                        )}
+                      </td>
+                      <td>
+                        <Tag tone={goalStatusTone(goal.status)}>
+                          {goal.active ? "active" : goal.status}
+                        </Tag>
+                      </td>
+                      <td>
+                        <div>{goal.priority}</div>
+                        <div className="muted small">Urgency {goal.urgency}</div>
+                      </td>
+                      <td>
+                        <div className="goal-progress">
+                          <progress max={100} value={goal.progress} />
+                          <span>{formatGoalProgress(goal.progress)}</span>
+                        </div>
+                      </td>
+                      <td>{formatGoalTiming(goal)}</td>
+                      <td className="table-actions">
+                        <button
+                          type="button"
+                          disabled={busy}
+                          aria-label={`Remove goal ${goal.goal_type}`}
+                          onClick={() =>
+                            void runEdit(() =>
+                              apiDelete<EntityDetail>(
+                                `/entities/${current.id}/goals/${goal.id}`,
+                              ),
+                            )
+                          }
+                        >
+                          x
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </>
         )}
       </Section>
 
@@ -843,16 +954,252 @@ function AddControl({
   );
 }
 
+function buildGoalHierarchy(goals: EntityGoal[]): {
+  rootGoals: EntityGoal[];
+  goalsByParent: Map<number, EntityGoal[]>;
+} {
+  const goalsByParent = new Map<number, EntityGoal[]>();
+  const rootGoals: EntityGoal[] = [];
+  for (const g of goals) {
+    if (g.parent_goal_id == null) {
+      rootGoals.push(g);
+    } else {
+      const pid = g.parent_goal_id;
+      if (!goalsByParent.has(pid)) {
+        goalsByParent.set(pid, []);
+      }
+      goalsByParent.get(pid)!.push(g);
+    }
+  }
+  const sortGoals = (a: EntityGoal, b: EntityGoal) => {
+    const oa = getPayloadOrder(a.payload);
+    const ob = getPayloadOrder(b.payload);
+    if (oa !== ob) return oa - ob;
+    return a.id - b.id;
+  };
+  rootGoals.sort(sortGoals);
+  for (const arr of goalsByParent.values()) {
+    arr.sort(sortGoals);
+  }
+  return { rootGoals, goalsByParent };
+}
+
+function getPayloadOrder(payload: EntityGoal["payload"]): number {
+  const n = getPayloadNumber(payload, "order");
+  return n ?? 0;
+}
+
+function getPayloadString(
+  payload: EntityGoal["payload"],
+  key: string,
+): string | undefined {
+  if (!payload) return undefined;
+  const v = payload[key];
+  return typeof v === "string" && v.length > 0 ? v : undefined;
+}
+
+function getPayloadNumber(
+  payload: EntityGoal["payload"],
+  key: string,
+): number | undefined {
+  if (!payload) return undefined;
+  const v = payload[key];
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string" && v.trim() !== "") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : undefined;
+  }
+  return undefined;
+}
+
+function formatTravelToRegionDestination(
+  goal: EntityGoal,
+  regions: RegionSummary[] | undefined,
+): string {
+  const id =
+    getPayloadNumber(goal.payload, "region_id") ??
+    getPayloadNumber(goal.payload, "target_region_id");
+  if (id == null) return "";
+  const rn = regions?.find((r) => r.id === id)?.name;
+  const bits: string[] = [];
+  if (rn) bits.push(`Destination: ${rn}`);
+  else bits.push(`Destination: region ${id}`);
+  const ticks = getPayloadNumber(goal.payload, "duration_ticks");
+  if (ticks != null) bits.push(`${ticks} ticks`);
+  return bits.join(" · ");
+}
+
+function formatTravelSegmentLabel(goal: EntityGoal): string {
+  const from = getPayloadString(goal.payload, "from_name");
+  const to = getPayloadString(goal.payload, "to_name");
+  const fromId = getPayloadNumber(goal.payload, "from_region_id");
+  const toId = getPayloadNumber(goal.payload, "to_region_id");
+  if (from && to) return `${from} → ${to}`;
+  if (fromId != null && toId != null) return `Region ${fromId} → ${toId}`;
+  return formatGoalType("travel_segment");
+}
+
+function formatTravelSegmentMeta(goal: EntityGoal): string {
+  const parts: string[] = [];
+  const mode = getPayloadString(goal.payload, "mode");
+  const ticks = getPayloadNumber(goal.payload, "duration_ticks");
+  if (mode) parts.push(mode);
+  if (ticks != null) parts.push(`${ticks} ticks`);
+  return parts.join(" · ");
+}
+
+function TravelSegmentsList({
+  parentId,
+  goalsByParent,
+  busy,
+  onRemoveGoal,
+}: {
+  parentId: number;
+  goalsByParent: Map<number, EntityGoal[]>;
+  busy: boolean;
+  onRemoveGoal: (goalId: number) => void;
+}) {
+  const segments = (goalsByParent.get(parentId) ?? []).filter(
+    (g) => g.goal_type === "travel_segment",
+  );
+  if (segments.length === 0) return null;
+  return (
+    <div className="travel-segments">
+      <div className="travel-segments-heading muted small">Route segments</div>
+      {segments.map((seg) => (
+        <div key={seg.id} className="travel-segment">
+          <div className="travel-segment-main">
+            <span className="travel-segment-label">{formatTravelSegmentLabel(seg)}</span>
+            <Tag tone={goalStatusTone(seg.status)}>
+              {seg.active ? "active" : seg.status}
+            </Tag>
+            <button
+              type="button"
+              className="travel-segment-remove"
+              disabled={busy}
+              aria-label={`Remove travel segment ${seg.id}`}
+              onClick={() => onRemoveGoal(seg.id)}
+            >
+              x
+            </button>
+          </div>
+          {formatTravelSegmentMeta(seg) && (
+            <div className="travel-segment-meta muted small">
+              {formatTravelSegmentMeta(seg)}
+            </div>
+          )}
+          <div className="goal-progress goal-progress-compact">
+            <progress max={100} value={seg.progress} />
+            <span>{formatGoalProgress(seg.progress)}</span>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function GoalNestedBlock({
+  goal,
+  goalsByParent,
+  depth,
+  busy,
+  onRemoveGoal,
+  entityZoneRegionId,
+  regions,
+}: {
+  goal: EntityGoal;
+  goalsByParent: Map<number, EntityGoal[]>;
+  depth: number;
+  busy: boolean;
+  onRemoveGoal: (goalId: number) => void;
+  entityZoneRegionId: number | null;
+  regions: RegionSummary[] | undefined;
+}) {
+  const allKids = goalsByParent.get(goal.id) ?? [];
+  const walkKids = allKids.filter((k) => k.goal_type !== "travel_segment");
+  const travelSegmentsForGoal = allKids.filter((k) => k.goal_type === "travel_segment");
+  const depthClass = `goal-nested-depth-${Math.min(depth, 3)}`;
+  const nestedPayloadLine =
+    goal.goal_type === "travel_to_region"
+      ? formatTravelToRegionDestination(goal, regions)
+      : formatGoalPayload(goal.payload);
+
+  return (
+    <div className={`goal-nested-block ${depthClass}`}>
+      <div className="goal-nested-row">
+        <div className="goal-nested-title">
+          <span>{formatGoalType(goal.goal_type)}</span>
+          <span className="muted small">#{goal.id}</span>
+        </div>
+        <Tag tone={goalStatusTone(goal.status)}>
+          {goal.active ? "active" : goal.status}
+        </Tag>
+        <div className="goal-progress goal-progress-compact">
+          <progress max={100} value={goal.progress} />
+          <span>{formatGoalProgress(goal.progress)}</span>
+        </div>
+        <button
+          type="button"
+          className="goal-nested-remove"
+          disabled={busy}
+          aria-label={`Remove goal ${goal.goal_type}`}
+          onClick={() => onRemoveGoal(goal.id)}
+        >
+          x
+        </button>
+      </div>
+      {nestedPayloadLine && (
+        <div className="muted small goal-nested-payload">{nestedPayloadLine}</div>
+      )}
+      {goal.goal_type === "travel_to_region" && (
+        <TravelRoutePreview
+          goalId={goal.id}
+          previewFromRegionId={entityZoneRegionId}
+          targetRegionId={
+            getPayloadNumber(goal.payload, "region_id") ??
+            getPayloadNumber(goal.payload, "target_region_id")
+          }
+          travelSegments={travelSegmentsForGoal}
+        />
+      )}
+      {goal.goal_type === "travel_to_region" && (
+        <TravelSegmentsList
+          parentId={goal.id}
+          goalsByParent={goalsByParent}
+          busy={busy}
+          onRemoveGoal={onRemoveGoal}
+        />
+      )}
+      {walkKids.length > 0 && (
+        <div className="goal-nested-children">
+          {walkKids.map((child) => (
+            <GoalNestedBlock
+              key={child.id}
+              goal={child}
+              goalsByParent={goalsByParent}
+              depth={depth + 1}
+              busy={busy}
+              entityZoneRegionId={entityZoneRegionId}
+              regions={regions}
+              onRemoveGoal={onRemoveGoal}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function opinionTone(value: number): "success" | "danger" | "neutral" {
   if (value > 20) return "success";
   if (value < -20) return "danger";
   return "neutral";
 }
 
-function houseRoleTone(role: string): "warning" | "info" | "success" | "neutral" {
-  if (role === "patriarch" || role === "matriarch") return "warning";
-  if (role === "heir") return "success";
-  if (role === "scion") return "info";
+function houseRankTone(rank: string): "warning" | "info" | "success" | "neutral" {
+  if (rank === "patriarch" || rank === "matriarch") return "warning";
+  if (rank === "heir") return "success";
+  if (rank === "scion") return "info";
   return "neutral";
 }
 

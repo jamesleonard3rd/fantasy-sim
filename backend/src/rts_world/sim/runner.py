@@ -19,7 +19,7 @@ import logging
 import sys
 from typing import Sequence
 
-from ..db.seed import REGIONS_FILE, load_region_templates
+from ..db.seed import REGIONS_FILE, load_region_templates, seed_region_control
 from ..db.db import get_connection
 from . import regions as regions_repo
 from .scheduler import Scheduler
@@ -29,6 +29,10 @@ from .tick import tick_region
 log = logging.getLogger(__name__)
 
 
+def _region_key(template: dict[str, object]) -> str:
+    return str(template.get("key") or template["name"])
+
+
 def _resolve_region_id(args: argparse.Namespace) -> int:
     if args.region_id is not None:
         return int(args.region_id)
@@ -36,7 +40,13 @@ def _resolve_region_id(args: argparse.Namespace) -> int:
         with get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT id FROM regions WHERE name = %s", (args.region_name,)
+                    """
+                    SELECT id FROM regions
+                     WHERE key = %s OR name = %s
+                     ORDER BY key = %s DESC, id
+                     LIMIT 1
+                    """,
+                    (args.region_name, args.region_name, args.region_name),
                 )
                 row = cur.fetchone()
                 if row is None:
@@ -71,7 +81,7 @@ def cmd_status(_args: argparse.Namespace) -> int:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT r.id, r.name, r.type, p.name AS parent_name,
+                SELECT r.id, r.key, r.name, r.type, p.name AS parent_name,
                        r.tick_interval_seconds, r.last_tick_at, r.paused,
                        (SELECT COUNT(*) FROM entity_zones z WHERE z.region_id = r.id) AS entity_count
                   FROM regions r
@@ -92,12 +102,12 @@ def cmd_status(_args: argparse.Namespace) -> int:
         f"{'tick_s':>6}  {'paused':>6}  {'ents':>5}  last_tick_at"
     )
     for r in rows:
-        rid, name, region_type, parent_name, tick_s, last_tick_at, paused, ent_count = r
+        rid, key, name, region_type, parent_name, tick_s, last_tick_at, paused, ent_count = r
         print(
             f"{rid:>3}  {str(name):<24}  {str(region_type):<10}  "
             f"{str(parent_name or '-'):<24}  "
             f"{int(tick_s):>6}  {'Y' if paused else 'N':>6}  "
-            f"{int(ent_count):>5}  {last_tick_at}"
+            f"{int(ent_count):>5}  {last_tick_at}  key={key}"
         )
     if clock_row is not None:
         print(f"\nworld_clock: game_day={int(clock_row[0])} game_tick={int(clock_row[1])}")
@@ -126,10 +136,12 @@ def cmd_seed_regions(args: argparse.Namespace) -> int:
 
     with get_connection() as conn:
         region_ids: list[int] = []
-        name_to_id: dict[str, int] = {}
+        ref_to_id: dict[str, int] = {}
         for t in templates:
+            key = _region_key(t)
             rid = regions_repo.upsert_region(
                 conn,
+                key=key,
                 name=str(t["name"]),
                 region_type=str(t.get("type", t.get("kind", "region"))),
                 parent_id=None,
@@ -137,29 +149,36 @@ def cmd_seed_regions(args: argparse.Namespace) -> int:
                 paused=bool(t.get("paused", False)),
             )
             region_ids.append(rid)
-            name_to_id[str(t["name"])] = rid
+            ref_to_id[key] = rid
+            ref_to_id.setdefault(str(t["name"]), rid)
 
         for t in templates:
-            parent_name = t.get("parent")
-            if not parent_name:
+            parent_ref = t.get("parent")
+            if not parent_ref:
                 continue
-            parent_id = name_to_id.get(str(parent_name))
+            parent_id = ref_to_id.get(str(parent_ref))
             if parent_id is None:
                 with conn.cursor() as cur:
                     cur.execute(
-                        "SELECT id FROM regions WHERE name = %s",
-                        (str(parent_name),),
+                        """
+                        SELECT id FROM regions
+                         WHERE key = %s OR name = %s
+                         ORDER BY key = %s DESC, id
+                         LIMIT 1
+                        """,
+                        (str(parent_ref), str(parent_ref), str(parent_ref)),
                     )
                     row = cur.fetchone()
                     parent_id = int(row[0]) if row else None
             if parent_id is None:
                 print(
                     f"warning: region {t['name']!r} "
-                    f"references unknown parent {parent_name!r}"
+                    f"references unknown parent {parent_ref!r}"
                 )
                 continue
             regions_repo.upsert_region(
                 conn,
+                key=_region_key(t),
                 name=str(t["name"]),
                 region_type=str(t.get("type", t.get("kind", "region"))),
                 parent_id=parent_id,
@@ -203,6 +222,7 @@ def cmd_seed_regions(args: argparse.Namespace) -> int:
             assigned += 1
 
         conn.commit()
+        seed_region_control(conn, templates)
 
     print(f"upserted {len(region_ids)} regions, assigned {assigned} entities:")
     for t, rid in zip(templates, region_ids):

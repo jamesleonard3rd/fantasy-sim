@@ -44,6 +44,11 @@ class FactionNotFound(RelatedRecordNotFound):
     detail = "Faction not found"
 
 
+class EntityAlreadyInHouse(EntityServiceError):
+    detail = "Entity already belongs to a house"
+    status_code = 409
+
+
 class ItemNotFound(RelatedRecordNotFound):
     detail = "Item not found"
 
@@ -145,6 +150,11 @@ def set_entity_faction(
 ) -> None:
     _require_entity(conn, entity_id)
     _require_exists(conn, "factions", "id", faction_id, FactionNotFound)
+    faction_kind = entities_repo.get_faction_kind(conn, faction_id)
+    if faction_kind == "house":
+        existing_house_id = entities_repo.get_entity_house_faction_id(conn, entity_id)
+        if existing_house_id is not None and existing_house_id != faction_id:
+            raise EntityAlreadyInHouse()
     entities_repo.set_entity_faction(conn, entity_id, faction_id, rank, reputation)
 
 

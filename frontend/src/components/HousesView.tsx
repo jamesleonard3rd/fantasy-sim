@@ -28,7 +28,7 @@ function HousesView({ refreshKey }: { refreshKey: number }) {
 function HouseDetailPanel({ house }: { house: HouseDetail }) {
   const sortedMembers = sortMembers(house.members);
   const head = sortedMembers.find(
-    (m) => m.role === "patriarch" || m.role === "matriarch",
+    (m) => m.rank === "patriarch" || m.rank === "matriarch",
   );
 
   return (
@@ -57,7 +57,7 @@ function HouseDetailPanel({ house }: { house: HouseDetail }) {
             head ? (
               <span>
                 {head.name}{" "}
-                <span className="muted small">({head.role})</span>
+                <span className="muted small">({head.rank})</span>
               </span>
             ) : (
               "—"
@@ -83,7 +83,7 @@ function HouseDetailPanel({ house }: { house: HouseDetail }) {
             <thead>
               <tr>
                 <th>Member</th>
-                <th>Role</th>
+                <th>Rank</th>
                 <th>Race</th>
                 <th>Joined</th>
               </tr>
@@ -93,7 +93,7 @@ function HouseDetailPanel({ house }: { house: HouseDetail }) {
                 <tr key={m.id}>
                   <td>{m.name}</td>
                   <td>
-                    <Tag tone={roleTone(m.role)}>{m.role}</Tag>
+                    <Tag tone={rankTone(m.rank)}>{m.rank}</Tag>
                   </td>
                   <td>
                     {[m.race, m.subrace].filter(Boolean).join(" · ") || "—"}
@@ -212,17 +212,17 @@ function sortMembers(members: HouseMember[]): HouseMember[] {
     member: 3,
   };
   return [...members].sort((a, b) => {
-    const ra = order[a.role] ?? 99;
-    const rb = order[b.role] ?? 99;
+    const ra = order[a.rank] ?? 99;
+    const rb = order[b.rank] ?? 99;
     if (ra !== rb) return ra - rb;
     return a.name.localeCompare(b.name);
   });
 }
 
-function roleTone(role: string): "warning" | "info" | "success" | "neutral" {
-  if (role === "patriarch" || role === "matriarch") return "warning";
-  if (role === "heir") return "success";
-  if (role === "scion") return "info";
+function rankTone(rank: string): "warning" | "info" | "success" | "neutral" {
+  if (rank === "patriarch" || rank === "matriarch") return "warning";
+  if (rank === "heir") return "success";
+  if (rank === "scion") return "info";
   return "neutral";
 }
 

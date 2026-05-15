@@ -69,8 +69,11 @@ CREATE TABLE IF NOT EXISTS entity_factions (
     faction_id INT NOT NULL REFERENCES factions(id) ON DELETE CASCADE,
     rank TEXT NOT NULL,
     reputation SMALLINT DEFAULT 0 CHECK (reputation BETWEEN -100 AND 100),
+    joined_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     PRIMARY KEY (entity_id, faction_id)
 );
+ALTER TABLE entity_factions
+    ADD COLUMN IF NOT EXISTS joined_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL;
 
 -- Houses are factions (`factions.kind = 'house'`) with extra lineage rules.
 -- Mirrors the schools-as-faction-detail pattern: name + description + parent
@@ -115,7 +118,8 @@ CREATE TABLE IF NOT EXISTS entity_houses (
 -- `paused` is set to true while Unreal is the live authority on this region.
 CREATE TABLE IF NOT EXISTS regions (
     id SERIAL PRIMARY KEY,
-    name TEXT UNIQUE NOT NULL,
+    key TEXT UNIQUE NOT NULL,
+    name TEXT NOT NULL,
     type TEXT NOT NULL DEFAULT 'region',
     parent_id INT REFERENCES regions(id) ON DELETE SET NULL,
     tick_interval_seconds INT NOT NULL DEFAULT 180 CHECK (tick_interval_seconds > 0),
@@ -123,6 +127,28 @@ CREATE TABLE IF NOT EXISTS regions (
     paused BOOLEAN NOT NULL DEFAULT FALSE,
     CHECK (parent_id IS NULL OR parent_id <> id)
 );
+ALTER TABLE regions
+    ADD COLUMN IF NOT EXISTS key TEXT;
+UPDATE regions SET key = name WHERE key IS NULL;
+ALTER TABLE regions
+    ALTER COLUMN key SET NOT NULL;
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+          FROM pg_constraint
+         WHERE conname = 'regions_name_key'
+    ) THEN
+        ALTER TABLE regions DROP CONSTRAINT regions_name_key;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1
+          FROM pg_constraint
+         WHERE conname = 'regions_key_key'
+    ) THEN
+        ALTER TABLE regions ADD CONSTRAINT regions_key_key UNIQUE (key);
+    END IF;
+END $$;
 ALTER TABLE regions
     ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'region';
 ALTER TABLE regions
@@ -152,6 +178,49 @@ BEGIN
             CHECK (parent_id IS NULL OR parent_id <> id);
     END IF;
 END $$;
+
+-- Faction control over regions. Keep this normalized because both
+-- "what controls this place?" and "what places does this faction control?"
+-- are common queries. For now roles are intentionally limited to legal
+-- ownership and practical control.
+CREATE TABLE IF NOT EXISTS region_control (
+    region_id INT NOT NULL REFERENCES regions(id) ON DELETE CASCADE,
+    role TEXT NOT NULL,
+    faction_id INT NOT NULL REFERENCES factions(id) ON DELETE CASCADE,
+    since_game_tick BIGINT,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    PRIMARY KEY (region_id, role),
+    CHECK (role IN ('owner', 'controller'))
+);
+ALTER TABLE region_control
+    DROP COLUMN IF EXISTS control;
+CREATE INDEX IF NOT EXISTS idx_region_control_faction
+    ON region_control(faction_id, role);
+
+-- Faction-issued orders: lightweight persistent ledger/cooldown state.
+-- Orders are not executors; they describe what factions asked members to do.
+CREATE TABLE IF NOT EXISTS faction_orders (
+    id BIGSERIAL PRIMARY KEY,
+    faction_id INT NOT NULL REFERENCES factions(id) ON DELETE CASCADE,
+    entity_id INT REFERENCES entities(id) ON DELETE SET NULL,
+    region_id INT REFERENCES regions(id) ON DELETE SET NULL,
+    order_type TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at_game_tick BIGINT,
+    completed_at_game_tick BIGINT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    CHECK (status IN ('active','completed','failed','cancelled'))
+);
+CREATE INDEX IF NOT EXISTS idx_faction_orders_faction_status
+    ON faction_orders(faction_id, status);
+CREATE INDEX IF NOT EXISTS idx_faction_orders_entity_status
+    ON faction_orders(entity_id, status) WHERE entity_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_faction_orders_region_status
+    ON faction_orders(region_id, status) WHERE region_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_faction_orders_created_tick
+    ON faction_orders(created_at_game_tick);
 
 -- Zone: always loaded for world simulation. `zone` is a free-text label kept
 -- for backwards compatibility; new code should populate `region_id`.

@@ -209,6 +209,23 @@ Recommended Postgres tuning for the player's local machine (single-user dev):
     Longer term, the session/server runtime should own clock advancement and
     persist it at save/checkpoint boundaries.
 
+5.7 Travel graph authoring
+    Region travel is resolved from authored `travel_edges` plus implicit local
+    movement inside city-like region groups. A region whose `type` is `castle`,
+    `city`, `settlement`, or `town` is a local travel group root; descendants
+    of that root can travel to each other at 0 ticks with `mode = local`.
+    Region `key` is the stable globally-unique identity used by parents and
+    `travel_edges`; region `name` is display text and may repeat under
+    different parents (for example multiple cities can each have "Barracks").
+
+    Authoring rule: split dense cities into child regions under the city/castle
+    parent, but do NOT add all-to-all zero-cost edges between those children.
+    Add `travel_edges` only for leaving/entering the city, roads between
+    settlements, borders, ports, gates, or special routes, and point those
+    edges at region keys rather than display names. The routing layer derives
+    linear zero-cost local links from the parent hierarchy so large cities do
+    not create quadratic graph edges.
+
 --------------------------------------------------------------------------------
 6. DATABASE — CURRENT STATE
 --------------------------------------------------------------------------------

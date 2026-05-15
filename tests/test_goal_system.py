@@ -150,6 +150,46 @@ def test_join_faction_decomposes_into_travel_subgoal() -> None:
     assert [event.kind for event in events] == ["goal.activated"]
 
 
+def test_template_travel_without_override_waits_to_route_after_persist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from rts_world.sim import travel as travel_mod
+
+    def fake_route(
+        start_region_id: int | None,
+        end_region_id: int,
+        regions_by_id: dict[int, dict[str, object]],
+    ) -> list[travel_mod.TravelSegment]:
+        assert start_region_id == 1
+        assert end_region_id == 2
+        assert regions_by_id
+        return [travel_mod.TravelSegment(1, 2, "Test", "Frostpine Reach", 2, "road")]
+
+    monkeypatch.setattr(travel_mod, "route_travel_segments", fake_route)
+    join = _goal(1, 1, "join_faction", payload={"faction_id": 7, "region_id": 2})
+    state = _state([join])
+
+    first_events = goal_brain(state, _ctx(game_tick=10))
+    travel = next(goal for goal in state.goals if goal.get("parent_goal_id") == 1)
+
+    assert travel["goal_type"] == "travel_to_region"
+    assert travel["id"] is None
+    assert travel["status"] == "active"
+    assert travel["progress"] == 0
+    assert state.entities[0]["region_id"] == 1
+    assert [event.kind for event in first_events] == ["goal.activated"]
+
+    # Once the generated travel goal has a database id, it can become a segment parent.
+    travel["id"] = 20
+    second_events = goal_brain(state, _ctx(game_tick=11))
+    segments = [goal for goal in state.goals if goal.get("parent_goal_id") == 20]
+
+    assert [segment["goal_type"] for segment in segments] == ["travel_segment"]
+    assert segments[0]["status"] == "active"
+    assert travel["status"] == "paused"
+    assert [event.kind for event in second_events] == ["goal.paused", "goal.activated"]
+
+
 def test_travel_to_region_can_run_as_direct_goal() -> None:
     travel = _goal(
         1,
@@ -165,6 +205,26 @@ def test_travel_to_region_can_run_as_direct_goal() -> None:
     assert state.entities[0]["region_id"] == 2
     assert state.entities[0]["zone"] == "Frostpine Reach"
     assert state.dirty_entity_ids == {1}
+    assert [event.kind for event in events] == ["goal.activated", "goal.completed"]
+
+
+def test_explicit_travel_duration_keeps_direct_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from rts_world.sim import travel as travel_mod
+
+    def unexpected_route(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("duration_ticks travel should not route through travel_edges")
+
+    monkeypatch.setattr(travel_mod, "route_travel_segments", unexpected_route)
+
+    travel = _goal(1, 1, "travel_to_region", payload={"region_id": 2, "duration_ticks": 1})
+    state = _state([travel])
+
+    events = goal_brain(state, _ctx())
+
+    assert travel["status"] == "completed"
+    assert state.entities[0]["region_id"] == 2
     assert [event.kind for event in events] == ["goal.activated", "goal.completed"]
 
 
@@ -234,3 +294,216 @@ def test_goal_template_validation_rejects_bad_step() -> None:
                 ]
             }
         )
+
+
+def test_travel_to_region_expands_route_into_segments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from rts_world.sim import travel as travel_mod
+
+    def fake_route(
+        start_region_id: int | None,
+        end_region_id: int,
+        regions_by_id: dict[str, object],
+    ) -> list[travel_mod.TravelSegment]:
+        assert start_region_id == 1
+        assert end_region_id == 3
+        assert regions_by_id
+        return [
+            travel_mod.TravelSegment(1, 2, "A", "B", 2, "road"),
+            travel_mod.TravelSegment(2, 3, "B", "C", 3, "road"),
+        ]
+
+    monkeypatch.setattr(travel_mod, "route_travel_segments", fake_route)
+
+    travel = _goal(10, 1, "travel_to_region", payload={"region_id": 3})
+    state = RegionState(
+        region={"id": 1, "name": "A"},
+        regions_by_id={
+            1: {"id": 1, "name": "A"},
+            2: {"id": 2, "name": "B"},
+            3: {"id": 3, "name": "C"},
+        },
+        entities=[
+            {
+                "id": 1,
+                "name": "Ada",
+                "type": "humanoid",
+                "race_id": 1,
+                "subrace_id": None,
+                "created_at": None,
+                "zone": "A",
+                "region_id": 1,
+            }
+        ],
+    )
+    state.add_goal(travel)
+
+    events0 = goal_brain(state, _ctx(game_tick=100))
+    children = [g for g in state.goals if g.get("parent_goal_id") == 10]
+    assert [c["goal_type"] for c in children] == ["travel_segment", "travel_segment"]
+    assert children[0]["status"] == "active"
+    assert state.entities[0]["region_id"] == 1
+    assert [e.kind for e in events0] == ["goal.activated"]
+
+    goal_brain(state, _ctx(game_tick=101))
+    assert children[0]["status"] == "completed"
+    assert state.entities[0]["region_id"] == 2
+    assert children[1]["status"] == "pending"
+
+    goal_brain(state, _ctx(game_tick=102))
+    assert children[1]["status"] == "active"
+
+    for tick in (103, 104):
+        goal_brain(state, _ctx(game_tick=tick))
+    assert children[1]["status"] == "completed"
+    assert state.entities[0]["region_id"] == 3
+
+    goal_brain(state, _ctx(game_tick=105))
+    assert travel["status"] == "completed"
+    assert travel["progress"] == 100
+
+
+def test_zero_duration_travel_segments_drain_in_same_tick() -> None:
+    parent = _goal(10, 1, "travel_to_region", payload={"region_id": 3})
+    first = _goal(
+        11,
+        1,
+        "travel_segment",
+        parent_goal_id=10,
+        payload={
+            "order": 1,
+            "from_region_id": 1,
+            "to_region_id": 2,
+            "duration_ticks": 1,
+            "from_name": "A",
+            "to_name": "Border",
+        },
+    )
+    zero = _goal(
+        12,
+        1,
+        "travel_segment",
+        parent_goal_id=10,
+        payload={
+            "order": 2,
+            "from_region_id": 2,
+            "to_region_id": 3,
+            "duration_ticks": 0,
+            "from_name": "Border",
+            "to_name": "C",
+        },
+    )
+    state = RegionState(
+        region={"id": 1, "name": "A"},
+        regions_by_id={
+            1: {"id": 1, "name": "A"},
+            2: {"id": 2, "name": "Border"},
+            3: {"id": 3, "name": "C"},
+        },
+        entities=[
+            {
+                "id": 1,
+                "name": "Ada",
+                "type": "humanoid",
+                "race_id": 1,
+                "subrace_id": None,
+                "created_at": None,
+                "zone": "A",
+                "region_id": 1,
+            }
+        ],
+    )
+    for goal in (parent, first, zero):
+        state.add_goal(goal)
+
+    events = goal_brain(state, _ctx(game_tick=100))
+
+    assert first["status"] == "completed"
+    assert zero["status"] == "completed"
+    assert state.entities[0]["region_id"] == 3
+    assert state.entities[0]["zone"] == "C"
+    assert [e.kind for e in events] == [
+        "goal.activated",
+        "goal.completed",
+        "goal.activated",
+        "goal.completed",
+    ]
+
+
+def test_zero_duration_travel_drain_stops_before_nonzero_segment() -> None:
+    parent = _goal(10, 1, "travel_to_region", payload={"region_id": 3})
+    first = _goal(
+        11,
+        1,
+        "travel_segment",
+        parent_goal_id=10,
+        payload={"order": 1, "to_region_id": 2, "duration_ticks": 0},
+    )
+    second = _goal(
+        12,
+        1,
+        "travel_segment",
+        parent_goal_id=10,
+        payload={"order": 2, "to_region_id": 3, "duration_ticks": 2},
+    )
+    state = RegionState(
+        region={"id": 1, "name": "A"},
+        regions_by_id={
+            1: {"id": 1, "name": "A"},
+            2: {"id": 2, "name": "Border"},
+            3: {"id": 3, "name": "C"},
+        },
+        entities=[
+            {
+                "id": 1,
+                "name": "Ada",
+                "type": "humanoid",
+                "race_id": 1,
+                "subrace_id": None,
+                "created_at": None,
+                "zone": "A",
+                "region_id": 1,
+            }
+        ],
+    )
+    for goal in (parent, first, second):
+        state.add_goal(goal)
+
+    goal_brain(state, _ctx(game_tick=100))
+
+    assert first["status"] == "completed"
+    assert second["status"] == "pending"
+    assert state.entities[0]["region_id"] == 2
+
+
+def test_travel_no_route_without_duration_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    from rts_world.sim import travel as travel_mod
+
+    monkeypatch.setattr(travel_mod, "route_travel_segments", lambda *a, **k: None)
+
+    travel = _goal(11, 1, "travel_to_region", payload={"region_id": 2})
+    state = RegionState(
+        region={"id": 1, "name": "Test"},
+        regions_by_id={
+            1: {"id": 1, "name": "Test"},
+            2: {"id": 2, "name": "Frostpine Reach"},
+        },
+        entities=[
+            {
+                "id": 1,
+                "name": "Ada",
+                "type": "humanoid",
+                "race_id": 1,
+                "subrace_id": None,
+                "created_at": None,
+                "zone": "Test",
+                "region_id": 1,
+            }
+        ],
+    )
+    state.add_goal(travel)
+
+    events = goal_brain(state, _ctx(game_tick=1))
+    assert travel["status"] == "failed"
+    assert [e.kind for e in events] == ["goal.activated", "goal.failed"]

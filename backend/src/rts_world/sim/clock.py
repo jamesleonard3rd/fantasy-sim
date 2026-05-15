@@ -24,6 +24,7 @@ GAME_MINUTES_PER_DAY: int = 24 * 60
 _BASE_REAL_MINUTES_PER_GAME_DAY: float = 20.0
 
 # API sim loop: region ticks per full in-game day scales with ``day_length_multiplier``.
+# With the default 20 real minutes per game day, 5 ticks/day yields a 240s cadence.
 BASE_TICKS_PER_GAME_DAY: int = 5
 
 

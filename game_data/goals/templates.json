@@ -17,8 +17,7 @@
           "payload": {
             "region_id": "$target_region_id",
             "duration_ticks": {
-              "ref": "$payload.travel_ticks",
-              "default": 1
+              "ref": "$payload.travel_ticks"
             }
           }
         }
@@ -35,8 +34,7 @@
           "payload": {
             "region_id": "$target_region_id",
             "duration_ticks": {
-              "ref": "$payload.travel_ticks",
-              "default": 1
+              "ref": "$payload.travel_ticks"
             }
           }
         },

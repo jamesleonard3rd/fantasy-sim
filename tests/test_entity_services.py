@@ -17,6 +17,13 @@ def entity_mutation_fixture(db_conn):
     ids: dict[str, int] = {}
 
     with db_conn.cursor() as cur:
+        cur.execute(
+            """
+            ALTER TABLE entity_factions
+            ADD COLUMN IF NOT EXISTS joined_at TIMESTAMP WITH TIME ZONE
+            DEFAULT NOW() NOT NULL
+            """
+        )
         cur.execute("INSERT INTO races (name) VALUES (%s) RETURNING id", (f"{prefix}_race",))
         ids["race_id"] = int(cur.fetchone()[0])
 
@@ -32,11 +39,11 @@ def entity_mutation_fixture(db_conn):
 
         cur.execute(
             """
-            INSERT INTO regions (name, type, tick_interval_seconds)
-            VALUES (%s, 'region', 180)
+            INSERT INTO regions (key, name, type, tick_interval_seconds)
+            VALUES (%s, %s, 'region', 180)
             RETURNING id
             """,
-            (f"{prefix}_region",),
+            (f"{prefix}_region", f"{prefix}_region"),
         )
         ids["region_id"] = int(cur.fetchone()[0])
 

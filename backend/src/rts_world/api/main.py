@@ -1,7 +1,9 @@
 from typing import Any
 from datetime import datetime, timezone
 
-from fastapi import Body, FastAPI, HTTPException
+from dataclasses import asdict
+
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -9,6 +11,7 @@ from ..config import commit_game_settings, get_game_settings, merge_game_setting
 from ..db.db import get_connection
 from ..services import entities as entity_service
 from ..sim.control import sim_controller, sim_status_dict
+from ..sim.travel import route_travel_segments
 from ..sim.clock import (
     GAME_MINUTES_PER_DAY,
     game_minutes_per_real_second,
@@ -347,19 +350,84 @@ def list_goal_templates():
     return out
 
 
+@app.get("/travel-route")
+def travel_route_preview(
+    from_region_id: int = Query(..., description="Start region id (entity's current region)"),
+    to_region_id: int = Query(..., description="Destination region id"),
+) -> dict[str, Any]:
+    """Cheapest path over ``travel_edges`` (same logic as sim)."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, key, name, type, parent_id
+                  FROM regions
+                 ORDER BY id
+                """
+            )
+            rows = cur.fetchall()
+
+    regions_by_id: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        regions_by_id[int(row[0])] = {
+            "id": int(row[0]),
+            "key": row[1],
+            "name": row[2],
+            "type": row[3],
+            "parent_id": int(row[4]) if row[4] is not None else None,
+        }
+
+    if from_region_id not in regions_by_id or to_region_id not in regions_by_id:
+        raise HTTPException(status_code=404, detail="Unknown region id")
+
+    segments = route_travel_segments(from_region_id, to_region_id, regions_by_id)
+
+    if segments is None:
+        return {
+            "segments": None,
+            "stop_names": [],
+            "reason": "no_route",
+        }
+
+    if not segments:
+        return {
+            "segments": [],
+            "stop_names": [],
+            "reason": "same_region",
+        }
+
+    stop_names: list[str] = [str(segments[0].from_name)]
+    for seg in segments:
+        stop_names.append(str(seg.to_name))
+
+    return {
+        "segments": [asdict(s) for s in segments],
+        "stop_names": stop_names,
+        "reason": None,
+    }
+
+
 @app.get("/entities")
 def list_entities():
     sql = """
         SELECT e.id, e.name, e.type, e.created_at,
                r.name AS race, sr.name AS subrace,
                z.zone AS zone,
-               hf.id AS house_id, hf.name AS house_name, eh.role AS house_role
+               hf.id AS house_id, hf.name AS house_name, eh.rank AS house_rank
         FROM entities e
         LEFT JOIN races r ON r.id = e.race_id
         LEFT JOIN subraces sr ON sr.id = e.subrace_id
         LEFT JOIN entity_zones z ON z.entity_id = e.id
-        LEFT JOIN entity_houses eh ON eh.entity_id = e.id
-        LEFT JOIN factions hf ON hf.id = eh.house_id
+        LEFT JOIN LATERAL (
+            SELECT ef.faction_id, ef.rank
+            FROM entity_factions ef
+            JOIN factions f ON f.id = ef.faction_id
+            WHERE ef.entity_id = e.id
+              AND f.kind = 'house'
+            ORDER BY ef.joined_at
+            LIMIT 1
+        ) eh ON TRUE
+        LEFT JOIN factions hf ON hf.id = eh.faction_id
         ORDER BY e.id
         LIMIT 500
     """
@@ -527,15 +595,10 @@ def remove_entity_goal(entity_id: int, goal_id: int):
 
 @app.get("/factions")
 def list_factions():
-    # member_count sums regular faction members AND house members. Houses
-    # store membership in entity_houses (one-row-per-entity), every other
-    # kind of faction stores it in entity_factions, and the two are
-    # mutually exclusive — so adding the counts is correct.
     sql = """
         SELECT f.id, f.name, f.description, f.kind,
                p.id AS parent_id, p.name AS parent_name,
                (SELECT COUNT(*) FROM entity_factions ef WHERE ef.faction_id = f.id)
-               + (SELECT COUNT(*) FROM entity_houses eh WHERE eh.house_id = f.id)
                    AS member_count,
                (SELECT COUNT(*) FROM factions c WHERE c.parent_id = f.id) AS child_count,
                EXISTS(SELECT 1 FROM houses  h WHERE h.faction_id = f.id) AS is_house
@@ -574,26 +637,17 @@ def get_faction(faction_id: int):
             )
             faction["children"] = _rows_to_dicts(cur)
 
-            # Members: union the two membership tables. Houses use
-            # entity_houses (with role); other factions use entity_factions
-            # (with rank + reputation). We surface both under a single key so
-            # the frontend doesn't have to special-case house factions.
             cur.execute(
                 """
                 SELECT e.id, e.name, ef.rank AS rank, ef.reputation AS reputation,
-                       'faction' AS source
+                       CASE WHEN f.kind = 'house' THEN 'house' ELSE 'faction' END AS source
                 FROM entity_factions ef
                 JOIN entities e ON e.id = ef.entity_id
+                JOIN factions f ON f.id = ef.faction_id
                 WHERE ef.faction_id = %s
-                UNION ALL
-                SELECT e.id, e.name, eh.role AS rank, NULL::smallint AS reputation,
-                       'house' AS source
-                FROM entity_houses eh
-                JOIN entities e ON e.id = eh.entity_id
-                WHERE eh.house_id = %s
                 ORDER BY rank, name
                 """,
-                (faction_id, faction_id),
+                (faction_id,),
             )
             faction["members"] = _rows_to_dicts(cur)
 
@@ -628,22 +682,53 @@ def get_faction(faction_id: int):
             house_rows = _rows_to_dicts(cur)
             faction["house"] = house_rows[0] if house_rows else None
 
+            cur.execute(
+                """
+                SELECT r.id AS region_id, r.name AS region_name, r.type AS region_type,
+                       rc.role, rc.since_game_tick, rc.updated_at
+                  FROM region_control rc
+                  JOIN regions r ON r.id = rc.region_id
+                 WHERE rc.faction_id = %s
+                 ORDER BY rc.role, r.name
+                """,
+                (faction_id,),
+            )
+            faction["regions"] = _rows_to_dicts(cur)
+
+            cur.execute(
+                """
+                SELECT fo.id, fo.order_type, fo.status,
+                       fo.entity_id, e.name AS entity_name,
+                       fo.region_id, r.name AS region_name,
+                       fo.created_at_game_tick, fo.completed_at_game_tick,
+                       fo.payload, fo.created_at, fo.updated_at
+                  FROM faction_orders fo
+                  LEFT JOIN entities e ON e.id = fo.entity_id
+                  LEFT JOIN regions r ON r.id = fo.region_id
+                 WHERE fo.faction_id = %s
+                 ORDER BY fo.id DESC
+                 LIMIT 50
+                """,
+                (faction_id,),
+            )
+            faction["orders"] = _rows_to_dicts(cur)
+
     return faction
 
 
 # -------- Houses --------
 #
 # A house is `factions.kind = 'house'` plus a row in `houses` (lineage rules)
-# plus zero or more members in `entity_houses`. The `id` we expose to the
-# frontend is the underlying faction id, so /houses/{id} and
-# /factions/{id} agree on identity for the same house.
+# plus zero or more members in `entity_factions`. The `id` we expose to the
+# frontend is the underlying faction id, so /houses/{id} and /factions/{id}
+# agree on identity for the same house.
 
 @app.get("/houses")
 def list_houses():
     sql = """
         SELECT f.id, f.name, f.description AS notes,
                h.type, h.default_surname, h.spawn_min,
-               (SELECT COUNT(*) FROM entity_houses eh WHERE eh.house_id = f.id)
+               (SELECT COUNT(*) FROM entity_factions ef WHERE ef.faction_id = f.id)
                    AS member_count
         FROM factions f
         JOIN houses h ON h.faction_id = f.id
@@ -680,15 +765,15 @@ def get_house(house_id: int):
 
             cur.execute(
                 """
-                SELECT e.id, e.name, eh.role, eh.joined_at,
+                SELECT e.id, e.name, ef.rank, ef.joined_at,
                        r.name AS race, sr.name AS subrace
-                FROM entity_houses eh
-                JOIN entities e ON e.id = eh.entity_id
+                FROM entity_factions ef
+                JOIN entities e ON e.id = ef.entity_id
                 LEFT JOIN races r ON r.id = e.race_id
                 LEFT JOIN subraces sr ON sr.id = e.subrace_id
-                WHERE eh.house_id = %s
+                WHERE ef.faction_id = %s
                 ORDER BY
-                    CASE eh.role
+                    CASE ef.rank
                         WHEN 'patriarch' THEN 0
                         WHEN 'matriarch' THEN 0
                         WHEN 'heir' THEN 1
@@ -707,14 +792,15 @@ def get_house(house_id: int):
             cur.execute(
                 """
                 SELECT f.id, f.name, f.kind, COUNT(*) AS member_count
-                FROM entity_houses eh
+                FROM entity_factions eh
                 JOIN entity_factions ef ON ef.entity_id = eh.entity_id
                 JOIN factions f ON f.id = ef.faction_id
-                WHERE eh.house_id = %s
+                WHERE eh.faction_id = %s
+                  AND ef.faction_id <> %s
                 GROUP BY f.id, f.name, f.kind
                 ORDER BY member_count DESC, f.name
                 """,
-                (house_id,),
+                (house_id, house_id),
             )
             house["affiliated_factions"] = _rows_to_dicts(cur)
 
@@ -802,8 +888,12 @@ def list_regions():
               LEFT JOIN entity_zones z ON z.region_id = d.id
              GROUP BY d.root_id
         )
-        SELECT r.id, r.name, r.type, r.parent_id, p.name AS parent_name,
+        SELECT r.id, r.key, r.name, r.type, r.parent_id, p.name AS parent_name,
                r.tick_interval_seconds, r.paused, r.last_tick_at,
+               owner.faction_id AS owner_faction_id,
+               owner_f.name AS owner_faction_name,
+               controller.faction_id AS controller_faction_id,
+               controller_f.name AS controller_faction_name,
                (SELECT COUNT(*)::int FROM entity_zones z WHERE z.region_id = r.id)
                    AS direct_entity_count,
                COALESCE(rc.total_entity_count, 0)::int AS entity_count,
@@ -812,6 +902,12 @@ def list_regions():
                    AS child_count
           FROM regions r
           LEFT JOIN regions p ON p.id = r.parent_id
+          LEFT JOIN region_control owner
+            ON owner.region_id = r.id AND owner.role = 'owner'
+          LEFT JOIN factions owner_f ON owner_f.id = owner.faction_id
+          LEFT JOIN region_control controller
+            ON controller.region_id = r.id AND controller.role = 'controller'
+          LEFT JOIN factions controller_f ON controller_f.id = controller.faction_id
           LEFT JOIN region_counts rc ON rc.root_id = r.id
          ORDER BY COALESCE(p.name, r.name), r.parent_id NULLS FIRST, r.name
     """
@@ -842,8 +938,12 @@ def get_region(region_id: int):
                       FROM descendants d
                       LEFT JOIN entity_zones z ON z.region_id = d.id
                 )
-                SELECT r.id, r.name, r.type, r.parent_id, p.name AS parent_name,
+                SELECT r.id, r.key, r.name, r.type, r.parent_id, p.name AS parent_name,
                        r.tick_interval_seconds, r.paused, r.last_tick_at,
+                       owner.faction_id AS owner_faction_id,
+                       owner_f.name AS owner_faction_name,
+                       controller.faction_id AS controller_faction_id,
+                       controller_f.name AS controller_faction_name,
                        (SELECT COUNT(*)::int FROM entity_zones z WHERE z.region_id = r.id)
                            AS direct_entity_count,
                        COALESCE(rc.total_entity_count, 0)::int AS entity_count,
@@ -852,6 +952,12 @@ def get_region(region_id: int):
                            AS child_count
                   FROM regions r
                   LEFT JOIN regions p ON p.id = r.parent_id
+                  LEFT JOIN region_control owner
+                    ON owner.region_id = r.id AND owner.role = 'owner'
+                  LEFT JOIN factions owner_f ON owner_f.id = owner.faction_id
+                  LEFT JOIN region_control controller
+                    ON controller.region_id = r.id AND controller.role = 'controller'
+                  LEFT JOIN factions controller_f ON controller_f.id = controller.faction_id
                   CROSS JOIN region_counts rc
                  WHERE r.id = %s
                 """,
@@ -876,6 +982,7 @@ def get_region(region_id: int):
                 )
                 SELECT e.id, e.name, z.zone,
                        loc.id AS region_id,
+                       loc.key AS region_key,
                        loc.name AS region_name,
                        loc.type AS region_type
                   FROM descendants d
@@ -890,7 +997,7 @@ def get_region(region_id: int):
 
             cur.execute(
                 """
-                SELECT id, name, type
+                SELECT id, key, name, type
                   FROM regions
                  WHERE parent_id = %s
                  ORDER BY name
@@ -898,6 +1005,19 @@ def get_region(region_id: int):
                 (region_id,),
             )
             region["children"] = _rows_to_dicts(cur)
+
+            cur.execute(
+                """
+                SELECT rc.role, rc.faction_id, f.name AS faction_name,
+                       rc.since_game_tick, rc.updated_at
+                  FROM region_control rc
+                  JOIN factions f ON f.id = rc.faction_id
+                 WHERE rc.region_id = %s
+                 ORDER BY CASE rc.role WHEN 'owner' THEN 1 ELSE 2 END
+                """,
+                (region_id,),
+            )
+            region["control"] = _rows_to_dicts(cur)
 
     return region
 

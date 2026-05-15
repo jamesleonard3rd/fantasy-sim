@@ -8,7 +8,6 @@
     }
   },
   "simulation": {
-    "tick_rate": 10,
     "day_length_multiplier": 0.1
   },
   "balance": {

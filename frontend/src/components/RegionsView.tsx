@@ -24,7 +24,7 @@ function RegionsView({
         return [capitalize(r.type), parentLabel].filter(Boolean).join(" · ");
       }}
       getMeta={(r) =>
-        `${r.total_entity_count} resident${r.total_entity_count === 1 ? "" : "s"} total · ${r.child_count} subregion${r.child_count === 1 ? "" : "s"}`
+        `${r.total_entity_count} resident${r.total_entity_count === 1 ? "" : "s"} total · ${r.child_count} subregion${r.child_count === 1 ? "" : "s"} · Owner: ${r.owner_faction_name ?? "—"}`
       }
       searchPlaceholder="Search regions…"
       emptyMessage="No regions yet. Seed game data and run seed-regions."
@@ -61,10 +61,13 @@ function RegionDetailPanel({ region }: { region: RegionDetail }) {
           label="Type"
           value={capitalize(region.type)}
         />
+        <Field label="Key" value={region.key} />
         <Field
           label="Parent"
           value={region.parent_name ?? "—"}
         />
+        <Field label="Owner" value={region.owner_faction_name ?? "—"} />
+        <Field label="Controller" value={region.controller_faction_name ?? "—"} />
         <Field
           label="Last tick"
           value={
@@ -74,6 +77,33 @@ function RegionDetailPanel({ region }: { region: RegionDetail }) {
         <Field label="Direct residents" value={region.direct_entity_count} />
         <Field label="Total residents" value={region.total_entity_count} />
       </div>
+
+      <Section title="Faction control">
+        {region.control.length === 0 ? (
+          <span className="muted">No faction control assigned.</span>
+        ) : (
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Role</th>
+                <th>Faction</th>
+              </tr>
+            </thead>
+            <tbody>
+              {region.control.map((row) => (
+                <tr key={row.role}>
+                  <td>
+                    <Tag tone={row.role === "owner" ? "warning" : "info"}>
+                      {capitalize(row.role)}
+                    </Tag>
+                  </td>
+                  <td>{row.faction_name}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </Section>
 
       <Section title={`Subregions (${region.children.length})`}>
         {region.children.length === 0 ? (

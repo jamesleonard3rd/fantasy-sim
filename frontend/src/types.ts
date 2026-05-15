@@ -20,7 +20,7 @@ export type EntitySummary = {
   zone: string | null;
   house_id: number | null;
   house_name: string | null;
-  house_role: string | null;
+  house_rank: string | null;
   created_at: string;
 };
 
@@ -75,7 +75,7 @@ export type EntityHouseMembership = {
   notes: string | null;
   type: string | null;
   default_surname: string | null;
-  role: string;
+  rank: string;
   joined_at: string;
 };
 
@@ -159,6 +159,32 @@ export type FactionMember = {
 
 export type FactionChild = { id: number; name: string; kind: FactionKind };
 
+export type RegionControlRole = "owner" | "controller";
+
+export type FactionOrder = {
+  id: number;
+  order_type: string;
+  status: "active" | "completed" | "failed" | "cancelled";
+  entity_id: number | null;
+  entity_name: string | null;
+  region_id: number | null;
+  region_name: string | null;
+  created_at_game_tick: number | null;
+  completed_at_game_tick: number | null;
+  payload: unknown;
+  created_at: string;
+  updated_at: string;
+};
+
+export type FactionRegionControl = {
+  region_id: number;
+  region_name: string;
+  region_type: string;
+  role: RegionControlRole;
+  since_game_tick: number | null;
+  updated_at: string;
+};
+
 export type FactionHouseBrief = {
   default_surname: string | null;
   spawn_min: number | null;
@@ -192,6 +218,8 @@ export type FactionDetail = Omit<
   members: FactionMember[];
   school: FactionSchoolBrief;
   house: FactionHouseBrief;
+  regions: FactionRegionControl[];
+  orders: FactionOrder[];
 };
 
 export type SchoolSummary = {
@@ -223,6 +251,7 @@ export type SchoolDetail = SchoolSummary & {
 
 export type RegionSummary = {
   id: number;
+  key: string;
   name: string;
   type: string;
   parent_id: number | null;
@@ -230,6 +259,10 @@ export type RegionSummary = {
   tick_interval_seconds: number;
   paused: boolean;
   last_tick_at: string | null;
+  owner_faction_id: number | null;
+  owner_faction_name: string | null;
+  controller_faction_id: number | null;
+  controller_faction_name: string | null;
   direct_entity_count: number;
   entity_count: number;
   total_entity_count: number;
@@ -241,13 +274,21 @@ export type RegionResident = {
   name: string;
   zone: string;
   region_id: number;
+  region_key: string;
   region_name: string;
   region_type: string;
 };
 
 export type RegionDetail = RegionSummary & {
-  children: { id: number; name: string; type: string }[];
+  children: { id: number; key: string; name: string; type: string }[];
   residents: RegionResident[];
+  control: {
+    role: RegionControlRole;
+    faction_id: number;
+    faction_name: string;
+    since_game_tick: number | null;
+    updated_at: string;
+  }[];
 };
 
 export type Item = {
@@ -298,7 +339,7 @@ export type HouseSummary = {
 export type HouseMember = {
   id: number;
   name: string;
-  role: string;
+  rank: string;
   joined_at: string;
   race: string | null;
   subrace: string | null;
