@@ -31,7 +31,8 @@
       "notes": "Seat of House Valemont within the Whisperwood Marches."
     },
     {
-      "name": "Valemont Market",
+      "key": "valemont_keep_market",
+      "name": "City Market",
       "type": "market",
       "parent": "Valemont Keep",
       "owner": "House Valemont",
@@ -40,7 +41,8 @@
       "notes": "City market nestled within the heart of Valemont Keep."
     },
     {
-      "name": "Valemont Keep Barracks",
+      "key": "valemont_keep_barracks",
+      "name": "Barracks",
       "type": "barracks",
       "parent": "Valemont Keep",
       "owner": "House Valemont",
