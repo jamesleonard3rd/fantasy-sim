@@ -44,6 +44,10 @@ def fetch_house_lookup(conn: psycopg.Connection) -> Dict[str, int]:
         return {row[0]: int(row[1]) for row in cur.fetchall()}
 
 
+def fetch_faction_lookup(conn: psycopg.Connection) -> Dict[str, int]:
+    return fetch_lookup(conn, "factions")
+
+
 def insert_entity(conn: psycopg.Connection, name: str, race_id: int, subrace_id: int | None = None) -> int:
     with conn.cursor() as cur:
         cur.execute(
@@ -108,6 +112,47 @@ def insert_entity_house(
                 SET rank = EXCLUDED.rank
             """,
             (entity_id, house_id, role or "member"),
+        )
+
+
+def insert_entity_factions(
+    conn: psycopg.Connection,
+    entity_id: int,
+    memberships: List[Dict[str, Any] | str],
+    faction_lookup: Dict[str, int],
+) -> None:
+    if not memberships:
+        return
+
+    values: List[Tuple[int, int, str, int]] = []
+    for membership in memberships:
+        if isinstance(membership, str):
+            faction_name = membership
+            rank = "member"
+            reputation = 0
+        else:
+            faction_name = str(membership.get("name", ""))
+            rank = str(membership.get("rank") or membership.get("role") or "member")
+            reputation = int(membership.get("reputation", 0))
+
+        faction_id = faction_lookup.get(faction_name)
+        if faction_id is None:
+            raise ValueError(
+                f"Unknown faction '{faction_name}' for entity_id {entity_id}; "
+                "did you run seed_factions() first?"
+            )
+        values.append((entity_id, faction_id, rank, reputation))
+
+    with conn.cursor() as cur:
+        cur.executemany(
+            """
+            INSERT INTO entity_factions (entity_id, faction_id, rank, reputation)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (entity_id, faction_id) DO UPDATE
+                SET rank = EXCLUDED.rank,
+                    reputation = EXCLUDED.reputation
+            """,
+            values,
         )
 
 
@@ -212,6 +257,7 @@ def seed_templates(
     race_lookup: Dict[str, int],
     trait_lookup: Dict[str, int],
     house_lookup: Dict[str, int],
+    faction_lookup: Dict[str, int],
     region_lookup: Dict[str, int],
 ) -> Dict[str, int]:
     id_map: Dict[str, int] = {}
@@ -230,6 +276,12 @@ def seed_templates(
             entity_data.get("house"),
             entity_data.get("role"),
             house_lookup,
+        )
+        insert_entity_factions(
+            conn,
+            entity_id,
+            entity_data.get("factions", []),
+            faction_lookup,
         )
         insert_entity_region(
             conn,
@@ -267,10 +319,19 @@ def main() -> None:
         race_lookup = fetch_lookup(conn, "races")
         trait_lookup = fetch_lookup(conn, "traits")
         house_lookup = fetch_house_lookup(conn)
+        faction_lookup = fetch_faction_lookup(conn)
         region_lookup = fetch_lookup(conn, "regions")
 
         if not args.skip_templates:
-            seed_templates(conn, templates, race_lookup, trait_lookup, house_lookup, region_lookup)
+            seed_templates(
+                conn,
+                templates,
+                race_lookup,
+                trait_lookup,
+                house_lookup,
+                faction_lookup,
+                region_lookup,
+            )
 
         if args.random_count > 0:
             seed_random_entities(conn, args.random_count, race_lookup, trait_lookup)

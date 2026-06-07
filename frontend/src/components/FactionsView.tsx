@@ -280,6 +280,7 @@ function kindTone(
     case "order":
     case "guild":
     case "company":
+    case "empire":
       return "info";
     default:
       return "neutral";

@@ -84,6 +84,65 @@
       },
       "forced_magic": [],
       "notes": "House Eidra traces its lineage to Eidros the First, the first human king to unite the early realms, remembered for wielding radiant light magic that turned the tide of humanity’s earliest wars. At the height of his reign, Eidros vanished without battle, body, or record, leaving behind only relics and unanswered questions that still divide scholars and priests alike. The light of Eidros rarely surfaces in his descendants. Across generations, only a handful of Eidrans have displayed fleeting manifestations of his radiance—brief, overwhelming surges of light magic that appear without warning and never fully return. “The Light Was Real. The End Was Not Seen.”"
+    },
+    {
+      "name": "House Vaelor",
+      "type": "noble", 
+      "default_surname": "Vaelor",
+      "spawn_min": 3,
+      "forced_traits": ["Heart of the Phoenix"],
+      "house_trait_counts": {"0": 100, "1": 0},
+      "house_trait_weights": {
+      },
+      "normal_trait_weight_mults": {
+
+      },
+      "magic_type_counts": {"0": 100, "1": 50, "2": 5},
+      "magic_weights": {
+        "__non_house_magic": 1
+      },
+      "forced_magic": [],
+      "notes": "From Ash, Dominion."
+    },
+    {
+      "name": "House Drenhal",
+      "type": "noble", 
+      "default_surname": "Drenhal",
+      "spawn_min": 3,
+      "forced_traits": [],
+      "house_trait_counts": {"0": 100, "1": 5},
+      "house_trait_weights": {
+        "Heart of the Black Wolf": 1
+      },
+      "normal_trait_weight_mults": {
+
+      },
+      "magic_type_counts": {"0": 100, "1": 50, "2": 5},
+      "magic_weights": {
+        "__non_house_magic": 1
+      },
+      "forced_magic": [],
+      "notes": "Sigil is the black wolf. Warriors, mysterious."
+    },
+    {
+      "name": "House Corvain",
+      "type": "noble", 
+      "default_surname": "Corvain",
+      "spawn_min": 3,
+      "forced_traits": ["Tidewalker"],
+      "house_trait_counts": {"0": 100, "1":10 },
+      "house_trait_weights": {
+        "Sea God's Regret": 1
+      },
+      "normal_trait_weight_mults": {
+
+      },
+      "magic_type_counts": {"0": 100, "1": 50, "2": 5},
+      "magic_weights": {
+        "__non_house_magic": 1
+      },
+      "forced_magic": [],
+      "notes": "In time, the Tide claims all."
     }
   ]
 }

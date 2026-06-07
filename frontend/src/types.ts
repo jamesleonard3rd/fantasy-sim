@@ -135,7 +135,8 @@ export type FactionKind =
   | "guild"
   | "school"
   | "cult"
-  | "company";
+  | "company"
+  | "empire";
 
 export type FactionSummary = {
   id: number;

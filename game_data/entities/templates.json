@@ -103,6 +103,25 @@
       "traits": ["Blood of the First King (Stirring)", "Strong"],
       "magic": [],
       "notes": ""
+    },
+    {
+      "id": "caedrin_vaelor",
+      "name": "Caedrin Vaelor",
+      "race": "Human",
+      "gender": "M",
+      "house": "House Vaelor",
+      "role": "patriarch",
+      "factions": [
+        {
+          "name": "The Aurelian Empire",
+          "rank": "emperor"
+        }
+      ],
+      "region": "Whisperwood Marches",
+      "age": 21,
+      "traits": ["Heart of the Phoenix"],
+      "magic": [],
+      "notes": ""
     }
   ],
   "relationships": [

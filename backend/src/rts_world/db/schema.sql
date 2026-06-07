@@ -62,7 +62,7 @@ ALTER TABLE factions
     DROP CONSTRAINT IF EXISTS factions_kind_check;
 ALTER TABLE factions
     ADD CONSTRAINT factions_kind_check
-    CHECK (kind IN ('generic','house','order','guild','school','cult','company'));
+    CHECK (kind IN ('generic','house','order','guild','school','cult','company','empire'));
 
 CREATE TABLE IF NOT EXISTS entity_factions (
     entity_id INT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,

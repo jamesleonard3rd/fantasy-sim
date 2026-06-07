@@ -10,7 +10,7 @@
       "name": "The Ember Court",
       "kind": "generic",
       "description": "Ruling nobility of the southern realm.",
-      "parent": null
+      "parent": "The Aurelian Empire"
     },
     {
       "name": "The Flame Keepers",
@@ -58,6 +58,30 @@
       "name": "House Eidra",
       "kind": "house",
       "description": "Noble house tracing its lineage to Eidros the First, remembered for rare manifestations of radiant light magic.",
+      "parent": null
+    },
+    {
+      "name": "House Vaelor",
+      "kind": "house",
+      "description": "From Ash, Dominion.",
+      "parent": "The Aurelian Empire"
+    },
+    {
+      "name": "House Drenhal",
+      "kind": "house",
+      "description": "Sigil is the black wolf. Warriors, mysterious.",
+      "parent": null
+    },
+    {
+      "name": "House Corvain",
+      "kind": "house",
+      "description": "In time, the Tide claims all.",
+      "parent": null
+    },
+    {
+      "name": "The Aurelian Empire",
+      "kind": "empire",
+      "description": "",
       "parent": null
     }
   ]
